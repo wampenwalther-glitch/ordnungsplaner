@@ -14,6 +14,10 @@ Auf Franz' Wunsch nach dem ersten Gerätetest umgebaut. **Auf dem Gerät noch ni
 - Offen/Risiken: echter KI-Lauf, Modellname, Kostenhinweis geprüft?, Fotos werden bei „Plan erstellen“ an OpenAI gesendet (Hinweis steht in der Oberfläche), Mehrräume teilen das Zeitbudget gleichmäßig, keine 3D-Rekonstruktion aus Fotos (Plan nutzt Fotos direkt), Tests der Oberfläche fehlen.
 - Codex darf wieder ändern. Bitte `Sources/`-Tests und Doku abgleichen; README/„Erster Ablauf“ ist überholt.
 
+## UPDATE 18.10.2026 (Claude): „Mit ChatGPT verbinden“ statt API-Guthaben – CI grün (Lauf 39075372619), am Gerät NICHT geprüft
+
+Franz' API-Schlüssel lief auf „Limit/Guthaben“. Nach offizieller Prüfung (Details, Quellen, offene Punkte: `docs/OPENAI_ANBINDUNG.md`) nutzt die KI jetzt per „Sign in with ChatGPT“ sein ChatGPT-Abo (Plus/Pro). Neu: `ios/ChatGPTAuth.swift`; umgebaut: `ios/AIService.swift`, `ios/SettingsView.swift`, `StartFlow.swift` (Hinweis). API-Schlüssel bleibt als ausgeklappter Rückfall. **Ungeprüft/Risiko:** Registrierung eines iPhone-Clients über `dynamic_agent_client` (Doku nennt nur Loopback-Clients), Loopback-Empfang im Auth-Fenster, `json_schema` über diese Route (Rückfall eingebaut), Modellliste/Bild-Eingabe.
+
 ## Ziel und Nutzerkorrekturen
 
 Native iPhone-/iPad-App für foto- und ortsgestütztes Aufräumen. RoomPlan/LiDAR ist optional enthalten, nicht auf unbestimmte Zeit verschoben. Ohne LiDAR funktioniert die Raum-/Fotopunkt-Erfassung. iPhone 11 Pro ist das vorhandene Testgerät, keine Produktbegrenzung. Codex und Claude arbeiten gemeinsam, mit getrennten Aufgaben.
