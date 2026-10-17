@@ -105,6 +105,91 @@ public final class HouseholdRepository {
         try transaction { $0.scans.append(scan) }
     }
 
+    /// Stores an overview photo of a room. The room's automatic photo point is
+    /// created in the same transaction on first use.
+    public func addRoomPhoto(roomID: UUID, jpegData: Data, at date: Date = Date()) throws {
+        try transaction { state in
+            guard state.rooms.contains(where: { $0.id == roomID }) else {
+                throw OrderError.invalid("Dieser Raum existiert nicht mehr.")
+            }
+            let pointID: UUID
+            if let point = state.photoPoints.first(where: { $0.roomID == roomID && $0.name == HouseholdState.roomPhotoPointName }) {
+                pointID = point.id
+            } else {
+                let point = PhotoPoint(roomID: roomID, name: HouseholdState.roomPhotoPointName)
+                state.photoPoints.append(point)
+                pointID = point.id
+            }
+            state.photos.append(RoomPhoto(pointID: pointID, createdAt: date, jpegData: jpegData))
+        }
+    }
+
+    public func removePhoto(id: UUID) throws {
+        try transaction { state in
+            guard let index = state.photos.firstIndex(where: { $0.id == id }) else {
+                throw OrderError.invalid("Dieses Foto existiert nicht mehr.")
+            }
+            state.photos.remove(at: index)
+        }
+    }
+
+    /// Removes an open task nobody has worked on yet (e.g. an old AI suggestion).
+    /// Tasks with confirmed steps or inside the running session stay.
+    public func removeTask(id: UUID) throws {
+        try transaction { state in
+            guard let index = state.tasks.firstIndex(where: { $0.id == id }) else {
+                throw OrderError.invalid("Diese Aufgabe existiert nicht mehr.")
+            }
+            if let session = state.session, session.status != .finished, session.taskIDs.contains(id) {
+                throw OrderError.invalid("Diese Aufgabe gehört zur laufenden Runde. Beende die Runde zuerst.")
+            }
+            guard !state.events.contains(where: { $0.taskID == id }) else {
+                throw OrderError.invalid("Hier wurden schon Handgriffe bestätigt. Die Aufgabe bleibt als Verlauf erhalten.")
+            }
+            state.tasks.remove(at: index)
+            if let session = state.session, session.taskIDs.contains(id) { state.session = nil }
+        }
+    }
+
+    public func addAnalysis(_ analysis: RoomAnalysis) throws {
+        try transaction { $0.analyses.append(analysis) }
+    }
+
+    /// Saves the AI analyses with their tasks and starts one session over all
+    /// of them – all or nothing, so a failed write never leaves half a plan.
+    public func applyPlan(analyses: [RoomAnalysis], tasks: [HouseholdTask], goal: Goal, minutes: Int, energy: Energy) throws {
+        try transaction { state in
+            guard state.session == nil || state.session?.status == .finished else {
+                throw OrderError.invalid("Es läuft noch eine Aufräumrunde. Mach dort weiter oder beende sie zuerst.")
+            }
+            guard !tasks.isEmpty, minutes > 0 else {
+                throw OrderError.invalid("Es wurden keine Handgriffe vorgeschlagen. Versuche es mit anderen Fotos oder mehr Zeit.")
+            }
+            state.analyses.append(contentsOf: analyses)
+            state.tasks.append(contentsOf: tasks)
+            state.session = WorkSession(taskIDs: tasks.map(\.id), goal: goal, timeBudget: minutes, energy: energy)
+        }
+    }
+
+    /// Turns places the AI observed into real storage places. Only called after
+    /// an explicit user action; names already present in the room are skipped.
+    @discardableResult
+    public func adoptDetectedPlaces(roomID: UUID, _ detected: [DetectedPlace]) throws -> Int {
+        var added = 0
+        try transaction { state in
+            added = 0
+            for item in detected {
+                let name = item.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !name.isEmpty, !state.places.contains(where: {
+                    $0.roomID == roomID && $0.name.caseInsensitiveCompare(name) == .orderedSame
+                }) else { continue }
+                state.places.append(StoragePlace(roomID: roomID, name: name, kind: item.kind == "kiste" ? .box : .storage))
+                added += 1
+            }
+        }
+        return added
+    }
+
     public func suggestedTasks(goal: Goal, minutes: Int, energy: Energy) -> [HouseholdTask] {
         var remaining = max(0, minutes - (minutes >= 10 ? 2 : 1))
         var selected: [HouseholdTask] = []
@@ -240,6 +325,8 @@ public final class HouseholdRepository {
             try require(pointIDs.contains(photo.pointID) && !photo.jpegData.isEmpty && photo.jpegData.count <= 2_000_000,
                         "Foto fehlt, ist zu groß oder hat keinen gültigen Fotopunkt.")
         }
+        try require(Set(state.analyses.map(\.id)).count == state.analyses.count &&
+                    state.analyses.allSatisfy { roomIDs.contains($0.roomID) }, "Ungültige Raumanalyse.")
         for scan in state.scans {
             try require(roomIDs.contains(scan.roomID) && !scan.encodedRoom.isEmpty &&
                         [scan.walls, scan.doors, scan.windows, scan.objects].allSatisfy { $0 >= 0 }, "Ungültiger Raumscan.")

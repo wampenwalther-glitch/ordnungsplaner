@@ -158,4 +158,51 @@ final class RepositoryTests: XCTestCase {
         try restarted.undoCompletion()
         XCTAssertEqual(try HouseholdRepository(storage: storage).state.currentTask?.nextStep?.id, task.steps[0].id)
     }
+
+    func testRoomPhotosShareOneAutomaticPoint() throws {
+        let repository = try HouseholdRepository(storage: MemoryStorage())
+        try repository.addRoom(name: "Wohnzimmer")
+        let room = try XCTUnwrap(repository.state.rooms.first)
+        try repository.addRoomPhoto(roomID: room.id, jpegData: Data([1, 2, 3]))
+        try repository.addRoomPhoto(roomID: room.id, jpegData: Data([4, 5, 6]))
+        XCTAssertEqual(repository.state.photoPoints.count, 1)
+        XCTAssertEqual(repository.state.roomPhotos(room.id).count, 2)
+        try repository.removePhoto(id: repository.state.roomPhotos(room.id)[0].id)
+        XCTAssertEqual(repository.state.roomPhotos(room.id).count, 1)
+    }
+
+    func testApplyPlanIsAtomicAndStartsSession() throws {
+        let storage = MemoryStorage()
+        let repository = try HouseholdRepository(storage: storage)
+        try repository.addRoom(name: "Flur")
+        let room = try XCTUnwrap(repository.state.rooms.first)
+        let analysis = RoomAnalysis(roomID: room.id, goal: .visitors, photoIDs: [], summary: "Schuhe am Boden",
+            startHint: "Bei der Tür", detectedPlaces: [DetectedPlace(name: "Schuhregal", kind: "regal", note: "")], problemZones: ["Boden"])
+        let task = HouseholdTask(roomID: room.id, title: "Schuhe", goal: .visitors, estimatedMinutes: 5,
+            steps: [ActionStep(text: "Schuhe ins Regal stellen", hint: "Schuhregal")], source: .ai)
+        storage.failWrites = true
+        XCTAssertThrowsError(try repository.applyPlan(analyses: [analysis], tasks: [task], goal: .visitors, minutes: 10, energy: .low))
+        XCTAssertTrue(repository.state.analyses.isEmpty)
+        XCTAssertNil(repository.state.session)
+        storage.failWrites = false
+        try repository.applyPlan(analyses: [analysis], tasks: [task], goal: .visitors, minutes: 10, energy: .low)
+        let restarted = try HouseholdRepository(storage: storage)
+        XCTAssertEqual(restarted.state.currentTask?.nextStep?.hint, "Schuhregal")
+        XCTAssertEqual(restarted.state.latestAnalysis(room.id)?.startHint, "Bei der Tür")
+        XCTAssertThrowsError(try restarted.applyPlan(analyses: [], tasks: [task], goal: .order, minutes: 5, energy: .normal))
+        XCTAssertEqual(try restarted.adoptDetectedPlaces(roomID: room.id, analysis.detectedPlaces), 1)
+        XCTAssertEqual(try restarted.adoptDetectedPlaces(roomID: room.id, analysis.detectedPlaces), 0)
+    }
+
+    func testOlderFilesWithoutAnalysesStillLoad() throws {
+        let storage = MemoryStorage()
+        let repository = try HouseholdRepository(storage: storage)
+        try repository.addRoom(name: "Bad")
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(storage.data)) as? [String: Any])
+        json.removeValue(forKey: "analyses")
+        storage.data = try JSONSerialization.data(withJSONObject: json)
+        let restarted = try HouseholdRepository(storage: storage)
+        XCTAssertEqual(restarted.state.rooms.first?.name, "Bad")
+        XCTAssertTrue(restarted.state.analyses.isEmpty)
+    }
 }

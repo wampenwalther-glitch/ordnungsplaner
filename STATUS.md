@@ -2,6 +2,10 @@
 
 Stand: 17. Oktober 2026 · nativer Quellstand 0.1.0
 
+## AKTUELL: Claude arbeitet (17.10.2026 abends)
+
+Franz hat nach dem ersten Gerätetest Claude beauftragt: Fotos pro Raum, KI-Analyse (OpenAI; den Schlüssel trägt der Nutzer in den Einstellungen ein, er liegt im Schlüsselbund, nicht im App-Bundle), geführter Start („Aufräumen starten“: Räume, Ziel, Zeit, Energie → KI-Plan → Handgriffe), Einstellungen mit Hell/Dunkel. Betroffen sind `Sources/OrderCore/*`, `Tests/*` und alle `ios/*.swift`. **Codex bitte dort nichts parallel ändern, bis ein `[claude]`-Commit mit Übergabe vorliegt.** CI-Stand bisher: Lauf 39068940503 grün, IPA per Sideloadly auf Franz' iPhone installiert und gestartet.
+
 ## Ziel und Nutzerkorrekturen
 
 Native iPhone-/iPad-App für foto- und ortsgestütztes Aufräumen. RoomPlan/LiDAR ist optional enthalten, nicht auf unbestimmte Zeit verschoben. Ohne LiDAR funktioniert die Raum-/Fotopunkt-Erfassung. iPhone 11 Pro ist das vorhandene Testgerät, keine Produktbegrenzung. Codex und Claude arbeiten gemeinsam, mit getrennten Aufgaben.

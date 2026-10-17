@@ -5,11 +5,11 @@ struct PlannerTabs: View {
     @EnvironmentObject private var model: AppModel
     var body: some View {
         TabView {
-            NavigationStack { TodayView() }.tabItem { Label("Heute", systemImage: "sun.max") }
+            NavigationStack { TodayView() }.tabItem { Label("Aufräumen", systemImage: "sparkles") }
             NavigationStack { RoomsView() }.tabItem { Label("Wohnung", systemImage: "house") }
             NavigationStack { TasksView() }.tabItem { Label("Aufgaben", systemImage: "checklist") }
             NavigationStack { FindView() }.tabItem { Label("Finden", systemImage: "magnifyingglass") }
-            NavigationStack { DataSettingsView() }.tabItem { Label("Mehr", systemImage: "ellipsis") }
+            NavigationStack { SettingsView() }.tabItem { Label("Einstellungen", systemImage: "gearshape") }
         }
         .tint(.accentColor)
         .alert("Nicht gespeichert", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
@@ -18,159 +18,153 @@ struct PlannerTabs: View {
     }
 }
 
+/// Large, calm card used on the main screens.
+struct Card<Content: View>: View {
+    @ViewBuilder var content: Content
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) { content }
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+}
+
+/// Full-width primary button with a comfortable touch target.
+struct BigButton: View {
+    let title: String
+    let systemImage: String
+    let action: () -> Void
+    init(_ title: String, systemImage: String, action: @escaping () -> Void) {
+        self.title = title; self.systemImage = systemImage; self.action = action
+    }
+    var body: some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .font(.headline)
+                .frame(maxWidth: .infinity, minHeight: 34)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
+    }
+}
+
 struct TodayView: View {
     @EnvironmentObject private var model: AppModel
-    @State private var goal: Goal = .order
-    @State private var energy: Energy = .normal
-    @State private var minutes = 10
+    @State private var starting = false
+    @State private var addingRoom = false
 
     var body: some View {
-        List {
-            if let session = model.state.session, session.status != .finished {
-                Section(session.status == .paused ? "Hier hast du aufgehört" : "Dein nächster Handgriff") {
-                    if let task = model.state.currentTask, let step = task.nextStep {
-                        Text(task.title).font(.headline)
-                        Text(step.text).font(.title2)
-                        if let target = step.targetPlaceID {
-                            Label(model.state.path(for: target), systemImage: "archivebox")
+        ScrollView {
+            VStack(spacing: 16) {
+                if let session = model.state.session, session.status != .finished,
+                   let task = model.state.currentTask, let step = task.nextStep {
+                    CurrentStepCard(session: session, task: task, step: step)
+                } else {
+                    Card {
+                        if model.state.session?.status == .finished {
+                            Label("Runde geschafft – gut gemacht!", systemImage: "checkmark.seal.fill")
+                                .font(.headline).foregroundStyle(Color.accentColor)
                         }
-                        Text("\(task.steps.filter { $0.completedAt != nil }.count) von \(task.steps.count) Handgriffen bestätigt")
+                        Text("Bereit zum Aufräumen?").font(.title2.bold())
+                        Text("Wähle Räume, Ziel, Zeit und Energie. Die KI schaut sich deine Raumfotos an und zeigt dir Handgriff für Handgriff, was zu tun ist.")
                             .foregroundStyle(.secondary)
-                        if session.status == .paused {
-                            Button("Hier weitermachen") { model.perform { try $0.resume() } }
-                                .buttonStyle(.borderedProminent)
-                        } else {
-                            Button("Erledigt – bestätigen") { model.perform { try $0.completeCurrentStep(expectedStepID: step.id) } }
-                                .buttonStyle(.borderedProminent)
-                            Button("Pause") { model.perform { try $0.pause() } }
+                        BigButton("Aufräumen starten", systemImage: "play.fill") {
+                            if model.state.rooms.isEmpty { addingRoom = true } else { starting = true }
                         }
-                        Button("Für heute beenden") { model.perform { try $0.endSession() } }
-                        Text("Offene Schritte bleiben für die nächste Sitzung erhalten.").font(.caption).foregroundStyle(.secondary)
                     }
                 }
-            } else {
-                if model.state.session?.status == .finished {
-                    Section { Label("Sitzung beendet", systemImage: "checkmark.circle") }
-                }
-                Section("Was passt gerade?") {
-                    Picker("Ziel", selection: $goal) {
-                        ForEach(Goal.allCases) { Text($0.label).tag($0) }
-                    }
-                    Picker("Zeit", selection: $minutes) {
-                        ForEach([5, 10, 20, 45, 90], id: \.self) { Text("\($0) Minuten").tag($0) }
-                    }
-                    Picker("Energie", selection: $energy) {
-                        ForEach(Energy.allCases) { Text($0.label).tag($0) }
-                    }
-                    let suggestions = model.repository.suggestedTasks(goal: goal, minutes: minutes, energy: energy)
-                    if suggestions.isEmpty {
-                        Text("Für diese Auswahl ist noch keine passende Aufgabe erfasst. Füge unter Aufgaben einen kleinen Handgriff hinzu oder ändere Zeit und Energie.")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(suggestions) { task in
-                            Label("\(task.title) · ca. \(task.estimatedMinutes) Min.", systemImage: "circle")
-                        }
-                        Button("Was mache ich jetzt?") {
-                            model.perform { try $0.startSession(taskIDs: suggestions.map(\.id), goal: goal, minutes: minutes, energy: energy) }
-                        }
-                        .buttonStyle(.borderedProminent)
-                    }
-                    Text("Auswahl aus deinen erfassten Aufgaben. Ein kurzer Abschlusspuffer bleibt frei. Noch keine KI-Fotoanalyse.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            if model.state.undoRecord != nil {
-                Section {
-                    Button("Letzte Erledigung rückgängig machen", systemImage: "arrow.uturn.backward") {
+                if model.state.undoRecord != nil {
+                    Button("Letzten Handgriff zurücknehmen", systemImage: "arrow.uturn.backward") {
                         model.perform { try $0.undoCompletion() }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if model.state.rooms.isEmpty {
+                    Card {
+                        Label("So geht's", systemImage: "lightbulb").font(.headline)
+                        Text("1. Raum anlegen\n2. Vier Fotos vom Raum machen\n3. Aufräumen starten")
+                        Button("Ersten Raum anlegen", systemImage: "plus") { addingRoom = true }
+                            .buttonStyle(.bordered)
+                    }
+                }
+                HStack(spacing: 12) {
+                    StatTile(value: model.state.events.count, label: "Handgriffe")
+                    StatTile(value: model.state.tasks.filter(\.isComplete).count, label: "Aufgaben fertig")
+                    StatTile(value: model.state.rooms.count, label: "Räume")
                 }
             }
-            Section("Dein bisheriger Fortschritt") {
-                LabeledContent("Bestätigte Handgriffe", value: "\(model.state.events.count)")
-                LabeledContent("Abgeschlossene Aufgaben", value: "\(model.state.tasks.filter(\.isComplete).count)")
-                LabeledContent("Räume erfasst", value: "\(model.state.rooms.count)")
-            }
-            if model.state.rooms.isEmpty {
-                Section {
-                    Text("Beginne unter Wohnung mit einem Raum. Du kannst die übrige Wohnung später ergänzen.")
-                }
-            }
+            .padding()
         }
-        .navigationTitle("Heute")
+        .background(Color(.systemGroupedBackground))
+        .navigationTitle("Aufräumen")
+        .sheet(isPresented: $starting) { StartFlowView() }
+        .sheet(isPresented: $addingRoom) { NewRoomForm() }
     }
 }
 
-struct RoomsView: View {
-    @EnvironmentObject private var model: AppModel
-    @State private var adding = false
+private struct StatTile: View {
+    let value: Int
+    let label: String
     var body: some View {
-        List {
-            if model.state.rooms.isEmpty {
-                ContentUnavailableView("Dein erster Raum", systemImage: "house", description: Text("Ein Raum und ein bekannter Lagerort reichen zum Anfangen."))
-            }
-            ForEach(model.state.rooms) { room in
-                NavigationLink { RoomDetailView(roomID: room.id) } label: {
-                    VStack(alignment: .leading) {
-                        Text(room.name).font(.headline)
-                        Text("\(model.state.places.filter { $0.roomID == room.id }.count) Lagerorte · \(model.state.tasks.filter { $0.roomID == room.id && !$0.isComplete }.count) offene Aufgaben")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-            }
+        VStack(spacing: 4) {
+            Text("\(value)").font(.title2.bold()).monospacedDigit()
+            Text(label).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
         }
-        .navigationTitle("Wohnung")
-        .toolbar { Button("Raum hinzufügen", systemImage: "plus") { adding = true } }
-        .sheet(isPresented: $adding) { NewRoomForm() }
+        .frame(maxWidth: .infinity, minHeight: 70)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 }
 
-struct RoomDetailView: View {
-    let roomID: UUID
+private struct CurrentStepCard: View {
+    let session: WorkSession
+    let task: HouseholdTask
+    let step: ActionStep
     @EnvironmentObject private var model: AppModel
-    @State private var addingPlace = false
-    @State private var addingPoint = false
-    @State private var showingScan = false
-    @State private var movingPlace: StoragePlace?
+
+    private var roomName: String { model.state.rooms.first { $0.id == task.roomID }?.name ?? "Raum" }
+    private var stepNumber: Int { (task.steps.firstIndex { $0.id == step.id } ?? 0) + 1 }
+    private var taskNumber: Int { (session.taskIDs.firstIndex(of: task.id) ?? 0) + 1 }
+    private var isVeryFirstStep: Bool { session.taskIDs.first == task.id && stepNumber == 1 }
+
     var body: some View {
-        List {
-            Section("Lagerorte und Kisten") {
-                ForEach(model.state.places.filter { $0.roomID == roomID }) { place in
-                    Button { movingPlace = place } label: {
-                        Label(model.state.path(for: place.id), systemImage: place.kind == .box ? "shippingbox" : "archivebox")
-                    }.tint(.primary)
+        Card {
+            HStack {
+                Label(roomName, systemImage: "house").font(.subheadline.weight(.semibold))
+                Spacer()
+                Text(session.goal.label).font(.caption).foregroundStyle(.secondary)
+            }
+            if isVeryFirstStep, let hint = model.state.latestAnalysis(task.roomID)?.startHint, !hint.isEmpty {
+                Label("Starte hier: \(hint)", systemImage: "mappin.and.ellipse")
+                    .font(.callout).foregroundStyle(Color.accentColor)
+            }
+            Text(task.title).font(.subheadline).foregroundStyle(.secondary)
+            Text(step.text).font(.title2.bold()).fixedSize(horizontal: false, vertical: true)
+            if let hint = step.hint {
+                Label(hint, systemImage: "arrow.right.circle").foregroundStyle(.secondary)
+            } else if let target = step.targetPlaceID {
+                Label(model.state.path(for: target), systemImage: "archivebox").foregroundStyle(.secondary)
+            }
+            ProgressView(value: Double(stepNumber - 1), total: Double(max(task.steps.count, 1)))
+            Text("Handgriff \(stepNumber) von \(task.steps.count) · Aufgabe \(taskNumber) von \(session.taskIDs.count)")
+                .font(.caption).foregroundStyle(.secondary)
+
+            if session.status == .paused {
+                Text("Pausiert – du machst genau hier weiter.").foregroundStyle(.secondary)
+                BigButton("Weitermachen", systemImage: "play.fill") { model.perform { try $0.resume() } }
+            } else {
+                BigButton("Erledigt", systemImage: "checkmark") {
+                    model.perform { try $0.completeCurrentStep(expectedStepID: step.id) }
                 }
-                Button("Lagerort oder Kiste hinzufügen", systemImage: "plus") { addingPlace = true }
+                .sensoryFeedback(.success, trigger: model.state.events.count)
             }
-            Section("Feste Fotopunkte") {
-                ForEach(model.state.photoPoints.filter { $0.roomID == roomID }) { point in
-                    NavigationLink { PhotoPointView(point: point) } label: {
-                        Label(point.name, systemImage: "camera")
-                    }
+            HStack {
+                if session.status == .active {
+                    Button("Pause", systemImage: "pause") { model.perform { try $0.pause() } }
                 }
-                Button("Fotopunkt anlegen", systemImage: "plus") { addingPoint = true }
-                Text("Zum Beispiel: im Türrahmen, Blick zum Fenster. Folgeaufnahmen möglichst aus derselben Perspektive machen.")
-                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button("Runde beenden", systemImage: "stop") { model.perform { try $0.endSession() } }
             }
-            Section("Optionaler Raumscan") {
-                Button("LiDAR-Raumscan öffnen", systemImage: "viewfinder") { showingScan = true }
-                if let scan = model.state.scans.last(where: { $0.roomID == roomID }) {
-                    Text("Zuletzt bestätigt: \(scan.createdAt.formatted(date: .abbreviated, time: .shortened))")
-                    Text("\(scan.walls) Wände · \(scan.doors) Türen · \(scan.windows) Fenster · \(scan.objects) grobe Objekte")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Text("Auf Geräten ohne LiDAR verwendest du die Fotopunkte. Ein Scan bestätigt keine freien Fächer oder Kisteninhalte.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-        }
-        .navigationTitle(model.state.rooms.first { $0.id == roomID }?.name ?? "Raum")
-        .sheet(isPresented: $addingPlace) { PlaceForm(roomID: roomID) }
-        .sheet(isPresented: $addingPoint) { NewPhotoPointForm(roomID: roomID) }
-        .sheet(item: $movingPlace) { MovePlaceForm(place: $0) }
-        .sheet(isPresented: $showingScan) {
-            RoomScanSheet(roomName: model.state.rooms.first { $0.id == roomID }?.name ?? "Raum") { scan in
-                try model.saveScan(scan, roomID: roomID)
-            }
+            .buttonStyle(.bordered)
         }
     }
 }
@@ -178,38 +172,55 @@ struct RoomDetailView: View {
 struct TasksView: View {
     @EnvironmentObject private var model: AppModel
     @State private var adding = false
+    private var open: [HouseholdTask] { model.state.tasks.filter { !$0.isComplete } }
     var body: some View {
         List {
-            Section("Offen") {
-                ForEach(model.state.tasks.filter { !$0.isComplete }) { task in
-                    NavigationLink { TaskDetailView(taskID: task.id) } label: {
-                        VStack(alignment: .leading) {
-                            Text(task.title)
-                            Text("\(task.goal.label) · \(task.estimatedMinutes) Min. · \(task.energy.label)")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                if model.state.tasks.filter({ !$0.isComplete }).isEmpty {
-                    Text("Keine offenen Aufgaben. Du kannst jederzeit eine ergänzen.").foregroundStyle(.secondary)
-                }
+            Section {
+                Text("Aufgaben entstehen normalerweise über „Aufräumen starten“. Eine noch unberührte Aufgabe löschst du, indem du nach links wischst.")
+                    .font(.callout).foregroundStyle(.secondary)
             }
-            Section("Abgeschlossen") {
+            Section("Offen") {
+                ForEach(open) { task in
+                    NavigationLink { TaskDetailView(taskID: task.id) } label: { TaskRow(task: task) }
+                        .swipeActions {
+                            Button("Löschen", systemImage: "trash", role: .destructive) {
+                                model.perform { try $0.removeTask(id: task.id) }
+                            }
+                        }
+                }
+                if open.isEmpty { Text("Keine offenen Aufgaben.").foregroundStyle(.secondary) }
+            }
+            Section("Erledigt") {
                 ForEach(model.state.tasks.filter(\.isComplete)) { task in
                     NavigationLink { TaskDetailView(taskID: task.id) } label: {
-                        Label(task.title, systemImage: "checkmark.circle")
+                        Label(task.title, systemImage: "checkmark.circle.fill")
                     }
                 }
             }
         }
         .navigationTitle("Aufgaben")
-        .toolbar { Button("Aufgabe hinzufügen", systemImage: "plus") { adding = true }.disabled(model.state.rooms.isEmpty) }
-        .safeAreaInset(edge: .bottom) {
-            if model.state.rooms.isEmpty {
-                Text("Lege zuerst unter Wohnung einen Raum an.").font(.callout).padding().background(.regularMaterial)
-            }
+        .toolbar {
+            Button("Eigene Aufgabe", systemImage: "plus") { adding = true }.disabled(model.state.rooms.isEmpty)
         }
         .sheet(isPresented: $adding) { NewTaskForm() }
+    }
+}
+
+private struct TaskRow: View {
+    let task: HouseholdTask
+    @EnvironmentObject private var model: AppModel
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(task.title).font(.headline)
+                if task.source == .ai {
+                    Text("KI").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Color.accentColor.opacity(0.18), in: Capsule())
+                }
+            }
+            Text("\(model.state.rooms.first { $0.id == task.roomID }?.name ?? "") · \(task.estimatedMinutes) Min. · \(task.steps.filter { $0.completedAt != nil }.count)/\(task.steps.count) Handgriffe")
+                .font(.caption).foregroundStyle(.secondary)
+        }
     }
 }
 
@@ -220,22 +231,22 @@ struct TaskDetailView: View {
         List {
             if let task = model.state.tasks.first(where: { $0.id == taskID }) {
                 Section(task.title) {
-                    Text("\(task.goal.label) · ca. \(task.estimatedMinutes) Minuten")
+                    Text("\(task.goal.label) · ca. \(task.estimatedMinutes) Minuten · \(task.energy.label)")
+                        .foregroundStyle(.secondary)
                     ForEach(task.steps) { step in
-                        VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .leading, spacing: 4) {
                             Label(step.text, systemImage: step.completedAt == nil ? "circle" : "checkmark.circle.fill")
+                            if let hint = step.hint { Text("→ \(hint)").font(.caption).foregroundStyle(.secondary) }
                             if let target = step.targetPlaceID { Text(model.state.path(for: target)).font(.caption) }
-                            if let date = step.completedAt {
-                                Text("Bestätigt: \(date.formatted(date: .abbreviated, time: .shortened))").font(.caption).foregroundStyle(.secondary)
-                            }
                         }
                     }
-                    if !task.isComplete {
-                        Button("Diese Aufgabe als Sitzung starten") {
+                }
+                if !task.isComplete, model.state.session == nil || model.state.session?.status == .finished {
+                    Section {
+                        Button("Nur diese Aufgabe starten", systemImage: "play.fill") {
                             model.perform { try $0.startSession(taskIDs: [task.id], goal: task.goal,
-                                minutes: task.estimatedMinutes, energy: task.energy) }
+                                                                minutes: task.estimatedMinutes, energy: task.energy) }
                         }
-                        Text("Danach unter Heute Handgriff für Handgriff fortsetzen.").font(.caption).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -249,17 +260,17 @@ struct FindView: View {
     @State private var query = ""
     var body: some View {
         List {
-            Section {
-                Text("Durchsucht deine erfassten Lagerorte und Kistenkennungen. Einzelne Gegenstände und Kisteninhalte sind in diesem Stand noch nicht inventarisiert.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
             ForEach(model.state.places.filter {
                 query.isEmpty || model.state.path(for: $0.id).localizedCaseInsensitiveContains(query)
             }) { place in
                 Label(model.state.path(for: place.id), systemImage: place.kind == .box ? "shippingbox" : "archivebox")
             }
+            if model.state.places.isEmpty {
+                ContentUnavailableView("Noch keine Lagerorte", systemImage: "archivebox",
+                    description: Text("Lass die KI einen Raum ansehen und übernimm die erkannten Regale, Schränke und Kisten."))
+            }
         }
         .navigationTitle("Finden")
-        .searchable(text: $query, prompt: "Kiste oder Lagerort")
+        .searchable(text: $query, prompt: "Kiste, Regal, Schrank …")
     }
 }

@@ -106,7 +106,7 @@ private struct PhotoComparison: View {
     }
 }
 
-private struct CameraCapture: UIViewControllerRepresentable {
+struct CameraCapture: UIViewControllerRepresentable {
     let onCapture: (UIImage) -> Void
     @Environment(\.dismiss) private var dismiss
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
@@ -148,15 +148,8 @@ struct DataSettingsView: View {
                 Text("Die JSON-Sicherung enthält auch private Fotos und Raumscans. Vor einer Wiederherstellung wird der bisherige Stand zusätzlich lokal gesichert.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Section("Stand dieses Prototyps") {
-                Text("Räume, Lagerorte und Kisten; Aufgaben mit bestätigten Handgriffen; Pause und Fortsetzung; Fotos an festen Punkten und Vergleich; optionale LiDAR-Erfassung.")
-                Text("Noch offen: KI-Fotoanalyse, Live-Referenzüberlagerung, Erinnerungen und Routinen, Gerätesynchronisation sowie zusätzliche Umzugsfunktionen.")
-                    .foregroundStyle(.secondary)
-                Text("Aufgaben werden ausschließlich aus deinen Eingaben ausgewählt. Es gibt keine versteckten Foto-Uploads und keinen eingebauten API-Schlüssel.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
         }
-        .navigationTitle("Mehr")
+        .navigationTitle("Sicherung")
         .fileExporter(isPresented: $exporting, document: exportDocument, contentType: .json, defaultFilename: "Ordnungsplaner-Sicherung") { result in
             if case .failure(let error) = result { model.error = error.localizedDescription }
         }

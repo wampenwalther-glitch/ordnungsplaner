@@ -18,7 +18,21 @@ struct NewRoomForm: View {
     @State private var name = ""
     var body: some View {
         NavigationStack {
-            Form { InlineSaveError(); TextField("Raumname", text: $name) }
+            Form {
+                InlineSaveError()
+                TextField("Raumname", text: $name)
+                Section("Vorschläge") {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack {
+                            ForEach(["Wohnzimmer", "Schlafzimmer", "Küche", "Bad", "Flur", "Arbeitszimmer", "Kinderzimmer", "Keller", "Abstellraum"], id: \.self) { suggestion in
+                                Button(suggestion) { name = suggestion }.buttonStyle(.bordered)
+                            }
+                        }
+                    }
+                }
+                Text("Danach machst du im Raum vier Fotos – die KI erkennt daraus Regale, Schränke und Unordnung.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
                 .navigationTitle("Neuer Raum")
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { dismiss() } }
@@ -152,7 +166,7 @@ struct NewTaskForm: View {
                     Picker("Energiebedarf", selection: $energy) { ForEach(Energy.allCases) { Text($0.label).tag($0) } }
                     Stepper("Etwa \(minutes) Minuten", value: $minutes, in: 1...180)
                 }
-                Section("Ein Handgriff pro Zeile") {
+                Section("Handgriffe – einer pro Zeile") {
                     TextEditor(text: $steps).frame(minHeight: 140)
                         .accessibilityLabel("Handgriffe, einer pro Zeile")
                     Text("Zum Beispiel: Kiste öffnen. Dann in einer neuen Zeile: USB-Kabel hineinlegen. Die Reihenfolge bleibt gespeichert.")
