@@ -11,7 +11,7 @@ struct PlannerTabs: View {
             NavigationStack { FindView() }.tabItem { Label("Finden", systemImage: "magnifyingglass") }
             NavigationStack { DataSettingsView() }.tabItem { Label("Mehr", systemImage: "ellipsis") }
         }
-        .tint(.teal)
+        .tint(.accentColor)
         .alert("Nicht gespeichert", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
             Button("OK") { model.error = nil }
         } message: { Text(model.error ?? "") }

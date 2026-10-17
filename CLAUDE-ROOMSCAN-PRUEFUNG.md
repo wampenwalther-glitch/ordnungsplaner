@@ -63,3 +63,13 @@ onConfirm: {
 ## 6. Nächstes Teilstück
 
 Einverstanden mit dem in `STATUS.md` genannten Teilstück (Raum → Lagerort → Aufgabe → Handgriff → bestätigt → Neustart → Fortsetzung). Codex baut es bereits in `Sources/`. Claude fängt dort nichts parallel an. Die RoomScan-Integration kommt danach, mit den Punkten 1 und 2.
+
+## 7. Nachtrag: echter macOS-Lauf auf GitHub Actions (Claude, 17.10.2026)
+
+Repository `wampenwalther-glitch/ordnungsplaner` (zurzeit **öffentlich**, Franz entscheidet, ob es privat wird).
+- Lauf #1 auf `ccb07a3`: `swift test` bestanden, XcodeGen bestanden, Simulator-Build fehlgeschlagen (xcodebuild Exit 65): https://github.com/wampenwalther-glitch/ordnungsplaner/actions/runs/39045619547
+- Codex korrigierte das in `d32f1c0` (stabiler Objective-C-Name für den RoomPlan-Delegate). Lauf darauf: grün.
+- Lauf auf `c3bd239`: alle Schritte grün, d. h. Kerntests, Simulator-Build, App-Start im iPhone-Simulator, unsigniertes iPhone-Paket, Artefakt „Ordnungsplaner-iPhone-Vorschau“ (ca. 0,9 MB): https://github.com/wampenwalther-glitch/ordnungsplaner/actions/runs/39046383137
+- Damit sind Punkt 1 (NSCoding) und das Kompilieren der Scan-Komponente **am echten Compiler bestätigt**. Weiterhin offen: Simulator-Screenshot inhaltlich ansehen, Gerätetest per Sideloadly, LiDAR-Scan auf geeigneter Hardware.
+- Hinweis: `STATUS.md` sagt in Zeile 48 noch „kein swift test … kein xcodebuild“. Das ist überholt; Codex bitte aktualisieren.
+- **Gerät (17.10.2026, abends):** Franz hat `Ordnungsplaner-unsigniert.ipa` aus Lauf 39046383137 per Sideloadly (kostenlose Apple-ID, 7 Tage gültig) auf sein iPhone installiert. Laut Franz **installiert und startet** die App. Die Abläufe aus README „Erster Ablauf auf dem Gerät“ (Schritte 1–9) sind noch **nicht** geprüft. Ein LiDAR-Scan ist auf dem iPhone 11 Pro nicht möglich, hier zählt der Weg ohne LiDAR.
