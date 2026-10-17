@@ -66,7 +66,8 @@ struct StartFlowView: View {
     @State private var preview: PlanPreview?
     @State private var working = false
     @State private var errorText: String?
-    @State private var hasKey = AIKeyStore.hasKey
+    @ObservedObject private var auth = ChatGPTAuth.shared
+    @State private var hasKey = AIAccess.isReady
 
     private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
     private var orderedSelection: [UUID] { model.state.rooms.map(\.id).filter { selectedRooms.contains($0) } }
@@ -92,7 +93,7 @@ struct StartFlowView: View {
             .interactiveDismissDisabled(working)
             .sheet(item: $photosFor) { room in NavigationStack { RoomPhotosSheet(roomID: room.id) } }
             .onAppear {
-                hasKey = AIKeyStore.hasKey
+                hasKey = AIAccess.isReady
                 if selectedRooms.isEmpty, model.state.rooms.count == 1 { selectedRooms = [model.state.rooms[0].id] }
             }
         }
@@ -180,10 +181,10 @@ struct StartFlowView: View {
 
                 if !hasKey {
                     Card {
-                        Label("KI noch nicht eingerichtet", systemImage: "key").font(.headline)
-                        Text("Einmalig deinen OpenAI-Schlüssel eintragen, dann kann die KI deine Fotos auswerten.")
+                        Label("KI noch nicht verbunden", systemImage: "person.crop.circle.badge.questionmark").font(.headline)
+                        Text("Verbinde einmalig dein ChatGPT-Konto. Danach wertet die KI deine Fotos mit deinem ChatGPT-Abo aus.")
                             .foregroundStyle(.secondary)
-                        NavigationLink { AISettingsView() } label: { Label("KI einrichten", systemImage: "arrow.right") }
+                        NavigationLink { AISettingsView() } label: { Label("Mit ChatGPT verbinden", systemImage: "arrow.right") }
                             .buttonStyle(.bordered)
                     }
                 }
@@ -193,8 +194,8 @@ struct StartFlowView: View {
                 }
 
                 BigButton("Plan erstellen", systemImage: "wand.and.stars") { Task { await plan() } }
-                    .disabled(selectedRooms.isEmpty || !roomsWithoutPhotos.isEmpty || !hasKey || sessionRunning)
-                Text("Die Fotos der gewählten Räume werden zur Auswertung an OpenAI geschickt. Gespeichert wird erst, wenn du den Plan startest.")
+                    .disabled(selectedRooms.isEmpty || !roomsWithoutPhotos.isEmpty || !(hasKey || auth.isConnected) || sessionRunning)
+                Text("Die Fotos der gewählten Räume werden zur Auswertung an OpenAI geschickt (über dein ChatGPT-Konto). Gespeichert wird erst, wenn du den Plan startest.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             .padding()

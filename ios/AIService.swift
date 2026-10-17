@@ -3,8 +3,9 @@ import Security
 import UIKit
 import OrderCore
 
-/// The user's own OpenAI API key, kept in the iOS keychain on this device only.
-/// It is never part of the app bundle, a backup export or the household JSON.
+/// The user's own OpenAI API key (optional fallback), kept in the iOS keychain
+/// on this device only. It is never part of the app bundle, a backup export or
+/// the household JSON. Normal use goes through "Mit ChatGPT verbinden".
 enum AIKeyStore {
     private static let service = "local.ordnungsplaner.openai"
     private static let account = "api-key"
@@ -52,9 +53,17 @@ struct AIRoomPlan: Decodable {
     let aufgaben: [Task]
 }
 
+enum AIAccess {
+    /// ChatGPT connection preferred; an API key is only the fallback.
+    @MainActor static var isReady: Bool { ChatGPTAuth.shared.isConnected || AIKeyStore.hasKey }
+}
+
+@MainActor
 enum AIService {
     static let defaultModel = "gpt-5-mini"
     static let modelKey = "aiModel"
+    static let chatGPTModelKey = "chatgptModel"
+    private static let base = "https://api.openai.com/v1"
 
     static var model: String {
         let value = UserDefaults.standard.string(forKey: modelKey)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -73,51 +82,201 @@ enum AIService {
         }.jpegData(compressionQuality: 0.6)
     }
 
+    // MARK: Analysis
+
     static func analyze(roomName: String, photos: [Data], knownPlaces: [String], goal: Goal,
                         minutes: Int, energy: Energy) async throws -> AIRoomPlan {
-        guard let key = AIKeyStore.key else {
-            throw OrderError.invalid("Für die KI fehlt noch dein OpenAI-Schlüssel. Trage ihn unter Einstellungen → KI ein.")
+        guard ChatGPTAuth.shared.isConnected || AIKeyStore.hasKey else {
+            throw OrderError.invalid("Die KI ist noch nicht eingerichtet. Verbinde dich unter Einstellungen → KI mit ChatGPT.")
         }
         let images = photos.compactMap(uploadJPEG)
         guard !images.isEmpty else { throw OrderError.invalid("Für \(roomName) gibt es noch keine lesbaren Fotos.") }
-
-        var content: [[String: Any]] = [["type": "input_text",
-                                         "text": prompt(roomName: roomName, photoCount: images.count, knownPlaces: knownPlaces,
-                                                        goal: goal, minutes: minutes, energy: energy)]]
-        for image in images {
-            content.append(["type": "input_image", "image_url": "data:image/jpeg;base64," + image.base64EncodedString()])
+        let text = prompt(roomName: roomName, photoCount: images.count, knownPlaces: knownPlaces,
+                          goal: goal, minutes: minutes, energy: energy)
+        do {
+            if ChatGPTAuth.shared.isConnected { return try await viaChatGPT(text: text, images: images) }
+            return try await viaAPIKey(text: text, images: images)
+        } catch let error as URLError {
+            throw OrderError.invalid(networkMessage(error))
         }
+    }
+
+    private static func content(text: String, images: [Data]) -> [[String: Any]] {
+        var parts: [[String: Any]] = [["type": "input_text", "text": text]]
+        for image in images {
+            parts.append(["type": "input_image", "image_url": "data:image/jpeg;base64," + image.base64EncodedString()])
+        }
+        return parts
+    }
+
+    // MARK: Route 1 – ChatGPT plan (official "Sign in with ChatGPT")
+
+    private static func viaChatGPT(text: String, images: [Data]) async throws -> AIRoomPlan {
+        var forceRefresh = false
+        var structured = true
+        var attempts = 0
+        while true {
+            attempts += 1
+            let token = try await ChatGPTAuth.shared.validAccessToken(forceRefresh: forceRefresh)
+            let model = try await chosenChatGPTModel(token: token)
+            // Responses over this route must use store:false and stream:true.
+            let prompt = structured ? text : text + "\n\nAntworte ausschließlich mit einem JSON-Objekt dieser Form (alle Felder Pflicht): "
+                + schemaHint
+            var body: [String: Any] = [
+                "model": model, "store": false, "stream": true,
+                "input": [["role": "user", "content": content(text: prompt, images: images)]]
+            ]
+            if structured { body["text"] = ["format": ["type": "json_schema", "name": "raumplan", "strict": true, "schema": schema]] }
+            var request = URLRequest(url: URL(string: base + "/responses")!)
+            request.httpMethod = "POST"
+            request.timeoutInterval = 240
+            request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+            let (bytes, response) = try await URLSession.shared.bytes(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if status != 200 {
+                var data = Data()
+                for try await byte in bytes { data.append(byte); if data.count > 20_000 { break } }
+                let (code, param, detail) = errorInfo(data)
+                if status == 401, attempts < 3, !forceRefresh { forceRefresh = true; continue }
+                if code == "subscription_sharing_unsupported_capability", structured, attempts < 3 { structured = false; continue }
+                throw OrderError.invalid(message(status: status, code: code, param: param, detail: detail, chatGPT: true))
+            }
+            do { return try await readStream(bytes) }
+            catch let failure as StreamFailure {
+                if failure.code == "subscription_sharing_unsupported_capability", structured, attempts < 3 { structured = false; continue }
+                throw OrderError.invalid(message(status: failure.code == nil ? 500 : statusFor(code: failure.code!),
+                                                 code: failure.code, param: nil, detail: failure.detail, chatGPT: true))
+            }
+        }
+    }
+
+    private struct StreamFailure: Error { let code: String?; let detail: String? }
+
+    /// Reads the SSE stream to `response.completed`; anything else counts as failure.
+    private static func readStream(_ bytes: URLSession.AsyncBytes) async throws -> AIRoomPlan {
+        var text = ""
+        var finalText: String?
+        var completed = false
+        for try await line in bytes.lines {
+            guard line.hasPrefix("data:") else { continue }
+            let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+            guard payload != "[DONE]", let json = (try? JSONSerialization.jsonObject(with: Data(payload.utf8))) as? [String: Any],
+                  let type = json["type"] as? String else { continue }
+            switch type {
+            case "response.output_text.delta": text += json["delta"] as? String ?? ""
+            case "response.output_text.done": finalText = json["text"] as? String
+            case "response.completed": completed = true
+            case "response.failed", "error", "response.incomplete":
+                let error = (json["response"] as? [String: Any])?["error"] as? [String: Any] ?? json["error"] as? [String: Any]
+                throw StreamFailure(code: error?["code"] as? String, detail: error?["message"] as? String)
+            default: break
+            }
+        }
+        guard completed else {
+            throw OrderError.invalid("Die Antwort der KI wurde unterbrochen. Bitte noch einmal versuchen.")
+        }
+        return try decode(finalText ?? text)
+    }
+
+    private static func chosenChatGPTModel(token: String) async throws -> String {
+        let available = try await chatGPTModels(token: token)
+        guard !available.isEmpty else {
+            throw OrderError.invalid("Für dein ChatGPT-Konto wurden keine KI-Modelle gefunden.")
+        }
+        let wanted = UserDefaults.standard.string(forKey: chatGPTModelKey) ?? ""
+        return available.first { $0.slug == wanted }?.slug ?? available[0].slug
+    }
+
+    /// Models the signed-in account may use, in the server's order.
+    static func chatGPTModels(token: String? = nil) async throws -> [(slug: String, name: String)] {
+        let resolved: String
+        if let token { resolved = token } else { resolved = try await ChatGPTAuth.shared.validAccessToken() }
+        var request = URLRequest(url: URL(string: base + "/models")!)
+        request.setValue("Bearer " + resolved, forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 30
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200 else {
+            let (code, param, detail) = errorInfo(data)
+            throw OrderError.invalid(message(status: status, code: code, param: param, detail: detail, chatGPT: true))
+        }
+        let json = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+        if let models = json["models"] as? [[String: Any]] {
+            return models.compactMap { item in
+                guard let slug = item["slug"] as? String, (item["visibility"] as? String ?? "list") == "list" else { return nil }
+                return (slug, item["display_name"] as? String ?? slug)
+            }
+        }
+        return (json["data"] as? [[String: Any]] ?? []).compactMap { item in
+            guard let id = item["id"] as? String else { return nil }
+            return (id, id)
+        }
+    }
+
+    /// Quick check without photos: sign-in valid, plan usage granted, models listed.
+    static func checkChatGPT() async throws -> String {
+        let models = try await chatGPTModels()
+        guard let first = models.first else { throw OrderError.invalid("Verbunden, aber es sind keine Modelle freigegeben.") }
+        let wanted = UserDefaults.standard.string(forKey: chatGPTModelKey) ?? ""
+        return models.first { $0.slug == wanted }?.name ?? first.name
+    }
+
+    // MARK: Route 2 – own API key (optional fallback, billed separately by OpenAI)
+
+    private static func viaAPIKey(text: String, images: [Data]) async throws -> AIRoomPlan {
+        guard let key = AIKeyStore.key else { throw OrderError.invalid("Noch kein Schlüssel gespeichert.") }
         let body: [String: Any] = [
             "model": model,
-            "input": [["role": "user", "content": content]],
+            "input": [["role": "user", "content": content(text: text, images: images)]],
             "text": ["format": ["type": "json_schema", "name": "raumplan", "strict": true, "schema": schema]]
         ]
-        var request = URLRequest(url: URL(string: "https://api.openai.com/v1/responses")!)
+        var request = URLRequest(url: URL(string: base + "/responses")!)
         request.httpMethod = "POST"
         request.timeoutInterval = 180
         request.setValue("Bearer " + key, forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
         let (data, response) = try await URLSession.shared.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard status == 200 else { throw OrderError.invalid(message(status: status, data: data)) }
-        guard let text = outputText(data) else {
+        guard status == 200 else {
+            let (code, param, detail) = errorInfo(data)
+            throw OrderError.invalid(message(status: status, code: code, param: param, detail: detail, chatGPT: false))
+        }
+        guard let output = outputText(data) else {
             throw OrderError.invalid("Die KI hat keine verwertbare Antwort geliefert. Bitte noch einmal versuchen.")
         }
-        do { return try JSONDecoder().decode(AIRoomPlan.self, from: Data(text.utf8)) }
-        catch { throw OrderError.invalid("Die Antwort der KI hatte ein unerwartetes Format. Bitte noch einmal versuchen.") }
+        return try decode(output)
     }
 
     /// Cheap call that only checks key and model, without photos.
-    static func check() async throws {
+    static func checkAPIKey() async throws {
         guard let key = AIKeyStore.key else { throw OrderError.invalid("Noch kein Schlüssel gespeichert.") }
-        var request = URLRequest(url: URL(string: "https://api.openai.com/v1/models/" + model)!)
+        var request = URLRequest(url: URL(string: base + "/models/" + model)!)
         request.setValue("Bearer " + key, forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 30
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard status == 200 else { throw OrderError.invalid(message(status: status, data: data)) }
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            guard status == 200 else {
+                let (code, param, detail) = errorInfo(data)
+                throw OrderError.invalid(message(status: status, code: code, param: param, detail: detail, chatGPT: false))
+            }
+        } catch let error as URLError { throw OrderError.invalid(networkMessage(error)) }
+    }
+
+    // MARK: Parsing and messages
+
+    private static func decode(_ text: String) throws -> AIRoomPlan {
+        var candidate = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let start = candidate.firstIndex(of: "{"), let end = candidate.lastIndex(of: "}"), start < end {
+            candidate = String(candidate[start...end])
+        }
+        do { return try JSONDecoder().decode(AIRoomPlan.self, from: Data(candidate.utf8)) }
+        catch { throw OrderError.invalid("Die Antwort der KI hatte ein unerwartetes Format. Bitte noch einmal versuchen.") }
     }
 
     private static func outputText(_ data: Data) -> String? {
@@ -131,15 +290,76 @@ enum AIService {
         return nil
     }
 
-    private static func message(status: Int, data: Data) -> String {
-        let detail = ((try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? [String: Any])?["message"] as? String
-        switch status {
-        case 401: return "OpenAI lehnt den Schlüssel ab. Bitte unter Einstellungen → KI prüfen."
-        case 404: return "Das KI-Modell „\(model)“ ist für deinen Schlüssel nicht verfügbar. Unter Einstellungen → KI ein anderes Modell eintragen."
-        case 429: return "OpenAI meldet ein Limit oder fehlendes Guthaben. Bitte später erneut versuchen oder das Konto prüfen."
-        default: return "Die KI ist gerade nicht erreichbar (\(status)). " + (detail ?? "Bitte Internetverbindung prüfen.")
+    private static func errorInfo(_ data: Data) -> (code: String?, param: String?, detail: String?) {
+        let json = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+        let error = json["error"] as? [String: Any] ?? [:]
+        return (error["code"] as? String ?? json["code"] as? String, error["param"] as? String, error["message"] as? String)
+    }
+
+    private static func statusFor(code: String) -> Int {
+        switch code {
+        case "subscription_sharing_usage_limit_exceeded": return 429
+        case "subscription_sharing_user_not_eligible": return 403
+        case "subscription_sharing_usage_unavailable", "subscription_sharing_user_unavailable": return 503
+        case "subscription_sharing_invalid_user": return 401
+        default: return 500
         }
     }
+
+    static func networkMessage(_ error: URLError) -> String {
+        switch error.code {
+        case .notConnectedToInternet, .networkConnectionLost, .dataNotAllowed, .internationalRoamingOff:
+            return "Keine Internetverbindung. Bitte WLAN oder Mobilfunk prüfen und noch einmal versuchen."
+        case .timedOut:
+            return "Die KI hat zu lange gebraucht. Bitte noch einmal versuchen, am besten mit weniger oder kleineren Fotos."
+        case .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed:
+            return "OpenAI ist gerade nicht erreichbar. Bitte später noch einmal versuchen."
+        default:
+            return "Netzwerkproblem (\(error.code.rawValue)). Bitte Verbindung prüfen und noch einmal versuchen."
+        }
+    }
+
+    private static func message(status: Int, code: String?, param: String?, detail: String?, chatGPT: Bool) -> String {
+        switch code {
+        case "subscription_sharing_user_not_eligible":
+            return "Dein ChatGPT-Konto kann hier nicht verwendet werden. Du brauchst ChatGPT Plus oder Pro (kein Firmen-Arbeitsbereich mit gesperrter Freigabe). Alternativ: unter Einstellungen → KI einen eigenen API-Schlüssel eintragen."
+        case "subscription_sharing_usage_limit_exceeded":
+            return "Dein ChatGPT-Nutzungslimit ist erreicht. Das kann das Wochenlimit für diese App oder dein Tarif sein. Prüfe in ChatGPT unter Einstellungen → Nutzung, oder versuche es später noch einmal."
+        case "subscription_sharing_usage_unavailable", "subscription_sharing_user_unavailable":
+            return "ChatGPT kann die Nutzung gerade nicht abrechnen. Bitte in ein paar Minuten noch einmal versuchen. Deine Anmeldung bleibt erhalten."
+        case "subscription_sharing_unsupported_capability":
+            return "ChatGPT unterstützt diese Anfrage nicht\(param.map { " (\($0))" } ?? ""). Bitte unter Einstellungen → KI ein anderes Modell wählen."
+        case "subscription_sharing_invalid_user":
+            return "Deine ChatGPT-Anmeldung wird nicht akzeptiert. Bitte unter Einstellungen → KI trennen und neu verbinden."
+        case "insufficient_quota":
+            return "Dein OpenAI-API-Guthaben ist aufgebraucht. Lade Guthaben auf – oder verbinde stattdessen deinen ChatGPT-Tarif unter Einstellungen → KI."
+        case "rate_limit_exceeded":
+            return "Zu viele Anfragen in kurzer Zeit. Bitte eine Minute warten und noch einmal versuchen."
+        default: break
+        }
+        switch status {
+        case 401:
+            return chatGPT
+                ? "Deine ChatGPT-Anmeldung ist abgelaufen oder wurde widerrufen. Bitte unter Einstellungen → KI erneut verbinden."
+                : "OpenAI lehnt den API-Schlüssel ab. Bitte unter Einstellungen → KI prüfen oder neu eintragen."
+        case 403:
+            return chatGPT
+                ? "ChatGPT verweigert den Zugriff (Berechtigung oder Region). Bitte unter Einstellungen → KI neu verbinden und die Tarif-Nutzung bestätigen."
+                : "OpenAI verweigert den Zugriff für diesen Schlüssel (Berechtigung oder Region)."
+        case 404:
+            return "Das gewählte KI-Modell ist nicht verfügbar. Bitte unter Einstellungen → KI ein anderes Modell wählen."
+        case 429:
+            return chatGPT
+                ? "Dein ChatGPT-Nutzungslimit ist erreicht oder es kamen zu viele Anfragen. Bitte später noch einmal versuchen."
+                : "OpenAI meldet ein Anfrage-Limit. Bitte kurz warten und noch einmal versuchen."
+        case 500...599:
+            return "OpenAI ist gerade gestört oder überlastet (\(status)). Bitte in ein paar Minuten noch einmal versuchen."
+        default:
+            return "Die KI-Anfrage ist fehlgeschlagen (\(status))." + (detail.map { " Meldung: \($0)" } ?? "")
+        }
+    }
+
+    // MARK: Prompt and schema
 
     private static func prompt(roomName: String, photoCount: Int, knownPlaces: [String], goal: Goal,
                                minutes: Int, energy: Energy) -> String {
@@ -180,6 +400,11 @@ enum AIService {
         - Alles auf Deutsch, freundlich, kurz, in Du-Form.
         """
     }
+
+    private static let schemaHint = """
+    {"zusammenfassung": string, "startpunkt": string, "lagerorte": [{"name": string, "art": "regal"|"schrank"|"kommode"|"kiste"|"ablage"|"sonstiges", "hinweis": string}], \
+    "problemzonen": [string], "aufgaben": [{"titel": string, "minuten": Zahl, "energie": "wenig"|"normal"|"viel", "handgriffe": [{"text": string, "zielort": string}]}]}
+    """
 
     private static let schema: [String: Any] = {
         func str() -> [String: Any] { ["type": "string"] }
