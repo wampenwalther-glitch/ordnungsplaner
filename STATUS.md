@@ -2,9 +2,17 @@
 
 Stand: 17. Oktober 2026 · nativer Quellstand 0.1.0
 
-## AKTUELL: Claude arbeitet (17.10.2026 abends)
+## AKTUELL (Claude, 17.10.2026 abends): KI-Ablauf geliefert, Commit c115889 – CI grün (Lauf 39072829860: swift test inkl. 3 neuer Tests, Simulator-Build, Start, unsignierte IPA)
 
-Franz hat nach dem ersten Gerätetest Claude beauftragt: Fotos pro Raum, KI-Analyse (OpenAI; den Schlüssel trägt der Nutzer in den Einstellungen ein, er liegt im Schlüsselbund, nicht im App-Bundle), geführter Start („Aufräumen starten“: Räume, Ziel, Zeit, Energie → KI-Plan → Handgriffe), Einstellungen mit Hell/Dunkel. Betroffen sind `Sources/OrderCore/*`, `Tests/*` und alle `ios/*.swift`. **Codex bitte dort nichts parallel ändern, bis ein `[claude]`-Commit mit Übergabe vorliegt.** CI-Stand bisher: Lauf 39068940503 grün, IPA per Sideloadly auf Franz' iPhone installiert und gestartet.
+Auf Franz' Wunsch nach dem ersten Gerätetest umgebaut. **Auf dem Gerät noch nicht geprüft, echter KI-Aufruf noch nie ausgeführt** (kein Schlüssel hinterlegt, Antwortformat nur nach Doku).
+
+- Reiter jetzt: Aufräumen · Wohnung · Aufgaben · Finden · Einstellungen. „Aufräumen starten“ (`ios/StartFlow.swift`): Räume wählen (auch alle), Ziel, Zeit, Energie als große Kacheln → KI-Plan als Vorschau → „Los geht's“ speichert Analyse + Aufgaben + Runde atomar (`applyPlan`). Handgriffe schreibt die KI, nicht der Nutzer; „Eigene Aufgabe“ bleibt als Nebenweg unter Aufgaben.
+- Raum (`ios/RoomsViews.swift`): Fotos über automatischen Fotopunkt „Raumfotos“ (Kamera mit „Noch eins?“, Mediathek-Mehrfachauswahl, Löschen), „Was die KI sieht“ (Zusammenfassung, Startpunkt, Baustellen, erkannte Lagerorte → Übernahme nur per Tipp). LiDAR-Karte nur wenn `RoomCaptureSession.isSupported`. Feste Fotopunkte/Vergleich sind aus der Oberfläche entfernt (`PhotoPointView` bleibt im Code).
+- KI (`ios/AIService.swift`): OpenAI Responses API, Bilder als data-URL (1024 px), strict JSON-Schema (deutsche Feldnamen), Standardmodell `gpt-5-mini` (in Einstellungen → KI änderbar; Modellname unbestätigt!). Schlüssel nur im Schlüsselbund, nie in JSON/Export/Bundle. Plan wird auf Zeitbudget gekürzt. KI legt nie Lagerorte, Inhalte oder Entsorgung fest.
+- Einstellungen (`ios/SettingsView.swift`): Hell/Dunkel/System, KI-Schlüssel + Verbindungstest, Sicherung.
+- Kern: `RoomAnalysis`, `ActionStep.hint`, `HouseholdTask.source`, `removeTask`, `adoptDetectedPlaces`; Schema-Version bleibt 1 (additiv, alte Dateien laden).
+- Offen/Risiken: echter KI-Lauf, Modellname, Kostenhinweis geprüft?, Fotos werden bei „Plan erstellen“ an OpenAI gesendet (Hinweis steht in der Oberfläche), Mehrräume teilen das Zeitbudget gleichmäßig, keine 3D-Rekonstruktion aus Fotos (Plan nutzt Fotos direkt), Tests der Oberfläche fehlen.
+- Codex darf wieder ändern. Bitte `Sources/`-Tests und Doku abgleichen; README/„Erster Ablauf“ ist überholt.
 
 ## Ziel und Nutzerkorrekturen
 
