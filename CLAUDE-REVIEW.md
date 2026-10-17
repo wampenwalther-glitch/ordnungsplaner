@@ -14,6 +14,8 @@ Quellen: [shouldPresent](https://developer.apple.com/documentation/roomplan/room
 
 **Aktualisierung nach Implementierung des lokalen Kerns:** Codex hat den Scan inzwischen in AppModel/RoomDetailView integriert. Der Save-Callback ist jetzt throwing und übernimmt einen RoomScanRecord über die atomare lokale Persistenz; erst nach erfolgreichem Speichern wird das Sheet geschlossen. Die XcodeGen-Konfiguration enthält NSCameraUsageDescription.
 
+Zusätzlichen unabhängigen Claude-Review in `CLAUDE-ROOMSCAN-PRUEFUNG.md` aufgenommen: NSCoding-Initializer und encode-Methode im Coordinator ergänzt (Protokollanforderung von Apple bestätigt), Wisch-Schließen eines aktiven Scans gesperrt, neutrale Anzeige während erstmaliger Berechtigungsabfrage. Bei Speicherfehler bleibt das fertige Ergebnis jetzt im Review, statt einen neuen Scan zu verlangen.
+
 **Weiterhin nicht ausgeführt:** Swift-/Xcode-Build, echte Kamera- und LiDAR-Gerätetests. Ein Return aus den Einstellungen erfordert gegebenenfalls Schließen und erneutes Öffnen des Scan-Sheets; Scene-/Session-Interruptions müssen im Host getestet werden. Der folgende ursprüngliche Bericht bleibt historisch, nicht der aktuelle Funktionsstand.
 
 ---

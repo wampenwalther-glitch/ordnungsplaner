@@ -38,8 +38,11 @@ struct RoomScanSheet: View {
                         dismiss()
                     }
                 )
+                .interactiveDismissDisabled()
             } else if !isRoomPlanSupported {
                 UnsupportedDeviceFallback(roomName: roomName, onClose: { dismiss() })
+            } else if cameraAccess == .notDetermined {
+                ProgressView("Kamerazugriff wird angefragt…")
             } else {
                 VStack(spacing: 16) {
                     Text("Kamerazugriff für den Raumscan")
@@ -123,6 +126,7 @@ private struct RoomPlanScanContainer: View {
     /// "Übernehmen" before the sheet has a chance to dismiss.
     @State private var hasConfirmed = false
     @State private var isProcessing = false
+    @State private var saveError: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -152,11 +156,13 @@ private struct RoomPlanScanContainer: View {
                 ReviewSummaryView(
                     roomName: roomName,
                     result: result,
+                    saveError: saveError,
                     onRetry: {
                         controller.cancel()
                         controller = RoomCaptureController()
                         isProcessing = false
                         hasConfirmed = false
+                        saveError = nil
                         phase = .scanning
                     },
                     onConfirm: {
@@ -165,7 +171,7 @@ private struct RoomPlanScanContainer: View {
                         do { try onSave(result) }
                         catch {
                             hasConfirmed = false
-                            phase = .failed("Der Scan konnte nicht gespeichert werden: \(error.localizedDescription)")
+                            saveError = "Der Scan konnte nicht gespeichert werden: \(error.localizedDescription)"
                         }
                     }
                 )
@@ -187,6 +193,7 @@ private struct RoomPlanScanContainer: View {
                         controller = RoomCaptureController()
                         isProcessing = false
                         hasConfirmed = false
+                        saveError = nil
                         phase = .scanning
                     }
                     .buttonStyle(.borderedProminent)
@@ -259,6 +266,7 @@ private struct RoomPlanScanContainer: View {
 private struct ReviewSummaryView: View {
     let roomName: String
     let result: RoomScanResult
+    let saveError: String?
     let onRetry: () -> Void
     let onConfirm: () -> Void
 
@@ -281,6 +289,12 @@ private struct ReviewSummaryView: View {
             .clipShape(RoundedRectangle(cornerRadius: 12))
 
             Spacer()
+
+            if let saveError {
+                Label(saveError, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.red)
+                    .accessibilityLabel("Nicht gespeichert: \(saveError)")
+            }
 
             HStack(spacing: 12) {
                 Button("Erneut scannen", action: onRetry)
@@ -378,6 +392,11 @@ private struct RoomCaptureRepresentable: UIViewRepresentable {
             self.onFinish = onFinish
             super.init()
         }
+
+        // RoomCaptureViewDelegate inherits NSCoding. This delegate is created
+        // only by UIViewRepresentable; it is never restored from an archive.
+        required init?(coder: NSCoder) { return nil }
+        func encode(with coder: NSCoder) {}
 
         // Called when the user stops the session (or it stops for another
         // reason) and RoomPlan is about to present its own results view.

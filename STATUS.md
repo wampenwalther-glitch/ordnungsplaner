@@ -16,6 +16,7 @@ Native iPhone-/iPad-App für foto- und ortsgestütztes Aufräumen. RoomPlan/LiDA
 - Fotopunkte, normale Kamera und PhotosPicker-Import, Ausrichtungsnormalisierung und Verkleinerung, datierter Vergleich erstes/neuestes Foto. Datum ist die Erfassung in der App, kein rekonstruierter EXIF-Aufnahmezeitpunkt.
 - Optionale RoomPlan-Komponente: Geräteprüfung, Kameraberechtigung, Stop/Ergebnis/Bestätigung, vollständige CapturedRoom-Kodierung und persistenter Scan-Datensatz. Kein Ableiten bestätigter leerer Lagerorte aus einem Scan.
 - Save-Callback für Raumscan ist jetzt `throws`; Sheet schließt erst nach erfolgreichem Save. Speicherfehler werden im Scan-Dialog angezeigt.
+- Nach zusätzlichem Claude-Review: NSCoding-Anforderungen des RoomCaptureViewDelegate ergänzt, aktiven Scan gegen versehentliches Wisch-Schließen geschützt. Bei Save-Fehler bleibt das Ergebnis zur erneuten Übernahme erhalten.
 - JSON-Export/Restore mit Validierung und zusätzlicher Sicherung vor Ersatz. Bei beschädigtem Startzustand oder unbekannter Schema-Version wird nicht automatisch überschrieben.
 - XcodeGen-Projektspezifikation mit iOS 17+, iPhone/iPad, Kameranutzungstext; macOS-Prüfskript und vorbereiteter GitHub-Actions-Workflow.
 
@@ -32,6 +33,8 @@ Native iPhone-/iPad-App für foto- und ortsgestütztes Aufräumen. RoomPlan/LiDA
 Claude Code Session `329bbda1-81ba-417a-a4af-2334a41e87d5`: 7 Turns, Exit 0, Ergebnis geliefert. Codex prüfte danach gegen offizielle Apple-Dokumentation und korrigierte Session-Start vor Existenz der View, Ergebnisverarbeitung (`shouldPresent`), vollständige CapturedRoom-Kodierung, View-Lebenszyklus bei Verarbeitung, Berechtigungen und Abbruch-/Callback-Schutz. Der historische Claude-Bericht ist ausdrücklich als überholt kommentiert.
 
 Zusätzlicher kurzer read-only Konzeptreview aus dem koordinierten Einkaufsplaner-Chat: atomare Status-/Speicheroperation, Undo von Anfang an, Zyklusprüfung, Schema-Version sowie reale Fotoausrichtung beachten. Diese Hinweise flossen in den Kern ein; Aussagen aus dem Konzeptreview sind keine ausgeführten nativen Tests.
+
+Franz' separat gestarteter Claude lieferte außerdem `CLAUDE-ROOMSCAN-PRUEFUNG.md` read-only. Codex hat insbesondere den NSCoding-Befund gegen Apples aktuelle Protokolldokumentation bestätigt und umgesetzt. Throwing-Save und Info.plist waren im laufenden Codex-Stand bereits umgesetzt; der Review bezog sich an diesen Stellen auf einen früheren Zwischenstand. Hinweis auf große JSON-/Bildarchive bleibt als dokumentierte Skalierungsgrenze offen. Keine fremden Codeänderungen überschrieben.
 
 ## Ausgeführte Prüfungen
 
