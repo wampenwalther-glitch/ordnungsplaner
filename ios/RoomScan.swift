@@ -380,6 +380,7 @@ private struct RoomCaptureRepresentable: UIViewRepresentable {
         uiView.captureSession.stop()
     }
 
+    @objc(OrderRoomCaptureCoordinator)
     final class Coordinator: NSObject, RoomCaptureViewDelegate {
         let controller: RoomCaptureController
         let onFinish: (Result<CapturedRoom, Error>) -> Void
