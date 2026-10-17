@@ -32,3 +32,16 @@ jobs:
           -destination 'generic/platform=iOS Simulator'
           -derivedDataPath DerivedData
           CODE_SIGNING_ALLOWED=NO build
+      - name: Launch app in iPhone Simulator
+        run: bash scripts/simulator-smoke.sh
+      - name: Build unsigned iPhone package
+        run: bash scripts/package-unsigned.sh
+      - name: Upload simulator screenshot and unsigned app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ordnungsplaner-iPhone-Vorschau
+          path: |
+            build/Ordnungsplaner-Simulator.png
+            build/Ordnungsplaner-unsigniert.ipa
+          if-no-files-found: error
+          retention-days: 14

@@ -2,7 +2,7 @@
 
 SwiftUI-App für iPhone/iPad ab iOS 17, mit unabhängigem Foundation-Datenkern. Keine externen Swift-Paketabhängigkeiten. Claude lieferte die optionale RoomPlan-Komponente; Codex prüfte und korrigierte sie und implementierte den lokalen Kern und die Oberfläche.
 
-**Prüfstatus:** Entwicklung unter Windows. Der Swift-/Xcode-Build sowie die Swift-Tests wurden hier noch nicht ausgeführt. Die vorhandene GitHub-Actions-Datei ist vorbereitet, nicht bereits in einem GitHub-Repository ausgeführt. Vor Installation ist ein erfolgreicher macOS-Build erforderlich. Aktueller belegter Stand: STATUS.md.
+**Prüfstatus:** Die zwölf Foundation-XCTest-Fälle, XcodeGen und der unsignierte iOS-Simulator-Build sind auf GitHubs macOS-Runner bestanden. [Erfolgreicher Build des Quellstands d32f1c0](https://github.com/wampenwalther-glitch/ordnungsplaner/actions/runs/39046163359). Ein Simulator-Starttest mit Screenshot und die Erstellung einer unsignierten IPA sind im nächsten Workflow ergänzt. Echte Kamera-/LiDAR-Gerätetests und Signierung stehen weiterhin aus. Aktueller belegter Stand: STATUS.md.
 
 ## Enthalten
 
@@ -43,7 +43,7 @@ Gesamtprüfung ohne Signierung:
 bash scripts/check-macos.sh
 ```
 
-Für GitHub Actions den Inhalt dieses Projektordners als Repository-Wurzel verwenden. Erst nach Push läuft `.github/workflows/ios.yml`. Das Ergebnis ist zunächst ein Simulator-Build, keine signierte installierbare IPA.
+GitHub Actions läuft unter `.github/workflows/ios.yml`. Nach erfolgreichem erweiterten Workflow stehen unter Artifacts ein Simulator-Screenshot und `Ordnungsplaner-unsigniert.ipa` bereit. Die IPA ist **nicht signiert** und kann nicht durch einfaches Antippen installiert werden. Sie benötigt vor der Geräteinstallation einen eingerichteten Signierungsweg, beispielsweise ein geeignetes Sideload-Werkzeug oder Xcode. Zertifikate, Apple-Zugang und Geräteeinrichtung sind nicht Teil dieses Repositorys.
 
 ## Erster Ablauf auf dem Gerät
 
@@ -67,7 +67,7 @@ Fehler beim Laden werden sichtbar angezeigt; es gibt absichtlich keinen automati
 
 ## Kerntests
 
-`Tests/OrderCoreTests/RepositoryTests.swift` deckt unter anderem Neustart, Pause/Resume, Undo nach Neustart, fehlgeschlagene Schreibvorgänge, Doppel-Tap, letzte Erledigung, Lagerort-Zyklen, doppelte Kistenkennungen, Auswahl nach Budget/Energie/Modus, ungültige Datenversionen und Foto-/Scan-Export ab. Das sind echte Swift-XCTest-Tests; sie müssen noch auf einer Swift-Laufzeit ausgeführt werden. Eine Syntaxprüfung ersetzt diese Ausführung nicht.
+`Tests/OrderCoreTests/RepositoryTests.swift` deckt unter anderem Neustart, Pause/Resume, Undo nach Neustart, fehlgeschlagene Schreibvorgänge, Doppel-Tap, letzte Erledigung, Lagerort-Zyklen, doppelte Kistenkennungen, Auswahl nach Budget/Energie/Modus, ungültige Datenversionen und Foto-/Scan-Export ab. Alle zwölf XCTest-Fälle wurden im oben verlinkten macOS-Workflow erfolgreich ausgeführt. Reale Kamera-/LiDAR-Prüfungen werden dadurch nicht ersetzt.
 
 ## Zusammenarbeit
 
