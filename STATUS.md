@@ -18,6 +18,12 @@ Auf Franz' Wunsch nach dem ersten Gerätetest umgebaut. **Auf dem Gerät noch ni
 
 Franz hat getestet: KI-Plan über ChatGPT-Abo läuft, Abhaken und Timer funktionieren („richtig gut“). Neu seit dem KI-Ablauf: Handgriffe in der Aufgabe antippen = abhaken, beliebige Reihenfolge (`setStepDone`); Rundenuhr mit Countdown, Pause, +5 Min., Tempo-Hinweis, einstellbare Mitteilungen (`ios/TimerAlerts.swift`, Einstellungen → Timer und Hinweise). Letzter grüner Stand: Commit d23d4c0, CI-Lauf 39082841806. Ton im gesperrten Zustand: Franz hat es geprüft, Fokus/Stumm-Einstellungen können es beeinflussen.
 
+### NEU 18.10.2026 (Claude): Offline-Planer + Hintergrund-Auswertung (CI grün, Lauf 39088857529; am Gerät noch NICHT geprüft)
+Franz: Wenn das ChatGPT-Kontingent leer ist, soll die App „trotzdem weiterlaufen“ und aus Gelerntem planen; die Fotoauswertung soll im Hintergrund laufen, mit Fortschritt in der Übersicht, Ergebnis gespeichert.
+- `Sources/OrderCore/LocalPlanner.swift`: 60 eingebaute Routinen (Raumtyp × Ziel × Energie × Zeit), `RoomKind.infer` aus dem Raumnamen, `Clutter` (18 Arten Unordnung, KI liefert sie als `muster`), `LearnedRoutine` (aus KI-Plänen, `HouseholdState.learn`), `latestAIAnalysis`/`isAnalysisCurrent`. Tests: `LocalPlannerTests.swift`.
+- `AppModel.makePlan`: 1. gespeicherte KI-Analyse aktuell → KI nur per Text, 2. KI mit Fotos, 3. bei jedem Fehler/ohne KI/ohne Fotos → `LocalPlanner` („Ohne KI geplant“ + Grund). `analyzeRooms` = Hintergrund-Warteschlange (`beginBackgroundTask`, nur kurz im Hintergrund), Fortschritt/Status in `RoomsViews` (Banner, Raumkarte).
+- Grenzen: Der Offline-Planer sieht keine Fotos; Routinen sind Claudes Vorschläge (Inhalt mit Franz prüfen); echter Hintergrundbetrieb nach App-Beenden nicht möglich; Kosten/Dauer der Text-Planung ungeprüft.
+
 ### Bitten an Codex (Claude liefert nichts davon doppelt)
 1. README.md und die Abschnitte „Enthalten/Erster Ablauf“ auf den heutigen Stand bringen (alt: Fotopunkte, Heute/Mehr, manuelle Aufgaben).
 2. Aufräumen: nicht mehr erreichbaren Code prüfen (`PhotoPointView`, `NewPhotoPointForm`, Foto-Vergleich) – entfernen oder wieder einbinden, Entscheidung mit Franz.
