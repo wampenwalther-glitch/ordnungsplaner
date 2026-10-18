@@ -60,7 +60,7 @@ final class WhereIsWhatTests: XCTestCase {
         try repository.setPlaceStatus(id: a.id, status: nil)
         XCTAssertEqual(repository.state.places(with: nil).map(\.name), ["B"])
         XCTAssertThrowsError(try repository.setPlaceStatus(id: UUID(), status: .sell))
-        XCTAssertEqual(PlaceStatus.allCases.count, 6)
+        XCTAssertEqual(PlaceStatus.allCases.count, 9)
         XCTAssertTrue(PlaceStatus.allCases.allSatisfy { !$0.label.isEmpty && !$0.symbol.isEmpty })
     }
 

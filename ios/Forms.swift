@@ -50,16 +50,21 @@ struct PlaceForm: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
-    @State private var kind: PlaceKind = .storage
+    @State private var typeName = "Regal"
     @State private var code = ""
     @State private var parentID: UUID?
+    init(roomID: UUID, initialParent: UUID? = nil) {
+        self.roomID = roomID
+        _parentID = State(initialValue: initialParent)
+    }
+    private var kind: PlaceKind { PlaceTypes.kind(for: typeName) }
     var body: some View {
         NavigationStack {
             Form {
                 InlineSaveError()
                 TextField("Name, z. B. oberes Regalfach", text: $name)
-                Picker("Art", selection: $kind) { ForEach(PlaceKind.allCases) { Text($0.label).tag($0) } }
-                if kind == .box { TextField("Kennung, z. B. A07", text: $code).textInputAutocapitalization(.characters) }
+                PlaceTypePicker(typeName: $typeName)
+                TextField("Kennung (optional, sonst vergibt die App eine)", text: $code).textInputAutocapitalization(.characters)
                 Picker("Steht in", selection: $parentID) {
                     Text("Direkt im Raum").tag(Optional<UUID>.none)
                     ForEach(model.state.places.filter { $0.roomID == roomID }) { Text(model.state.path(for: $0.id)).tag(Optional($0.id)) }
@@ -72,8 +77,9 @@ struct PlaceForm: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Speichern") {
+                        let cleanCode = code.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
                         let place = StoragePlace(roomID: roomID, name: name.trimmingCharacters(in: .whitespacesAndNewlines), kind: kind,
-                            parentID: parentID, code: kind == .box && !code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? code.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() : nil)
+                            parentID: parentID, code: cleanCode.isEmpty ? nil : cleanCode, typeName: typeName)
                         if model.perform({ try $0.addPlace(place) }) { dismiss() }
                     }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }

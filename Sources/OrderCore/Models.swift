@@ -40,26 +40,55 @@ public enum PlaceKind: String, Codable, CaseIterable, Identifiable, Hashable {
 /// What is going to happen with a place and its contents (moving house, sorting out).
 /// The place keeps its identity (and QR code); only the status changes.
 public enum PlaceStatus: String, Codable, CaseIterable, Identifiable, Hashable {
-    case stays, packed, take, sell, donate, check
+    // The raw values of the first ones are older and stay ("check" now reads "Noch sortieren").
+    case check, stays, take, packed, sell, giveAway, donate, dispose, store
     public var id: String { rawValue }
     public var label: String {
         switch self {
-        case .stays: return "Bleibt hier"
-        case .packed: return "Bereits gepackt"
+        case .check: return "Noch sortieren"
+        case .stays: return "Bleibt"
         case .take: return "Mitnehmen"
+        case .packed: return "Bereits gepackt"
         case .sell: return "Verkaufen"
-        case .donate: return "Spende"
-        case .check: return "Noch prüfen"
+        case .giveAway: return "Verschenken"
+        case .donate: return "Spenden"
+        case .dispose: return "Entsorgen"
+        case .store: return "Zwischenlagern"
         }
     }
     public var symbol: String {
         switch self {
-        case .stays: return "house"
-        case .packed: return "shippingbox.fill"
-        case .take: return "arrow.right.circle"
-        case .sell: return "eurosign.circle"
-        case .donate: return "gift"
         case .check: return "questionmark.circle"
+        case .stays: return "house"
+        case .take: return "arrow.right.circle"
+        case .packed: return "shippingbox.fill"
+        case .sell: return "eurosign.circle"
+        case .giveAway: return "hands.sparkles"
+        case .donate: return "gift"
+        case .dispose: return "trash"
+        case .store: return "archivebox"
+        }
+    }
+}
+
+/// Kinds of storage places the user can pick; they can add their own.
+public enum PlaceTypes {
+    public static let defaults = ["Schrank", "Regal", "Regalfach", "Schublade", "Kommode", "Kiste", "Box", "Behälter",
+                                  "Kellerbereich", "Ablage", "Sonstiger Lagerort"]
+    /// Types that are containers you open (they get the box icon and the K codes).
+    private static let containers: Set<String> = ["kiste", "box", "behälter"]
+
+    public static func kind(for typeName: String) -> PlaceKind { containers.contains(typeName.lowercased()) ? .box : .storage }
+
+    /// A type name for what the AI saw ("kiste", "schrank" ...).
+    public static func name(forForm form: String) -> String {
+        switch form {
+        case "kiste": return "Kiste"
+        case "schrank": return "Schrank"
+        case "regal": return "Regal"
+        case "kommode": return "Kommode"
+        case "ablage": return "Ablage"
+        default: return "Sonstiger Lagerort"
         }
     }
 }
@@ -72,12 +101,26 @@ public struct StoragePlace: Identifiable, Codable, Equatable {
     public var parentID: UUID?
     public var code: String?
     public var status: PlaceStatus?
-    /// What the AI took it for ("schrank", "regal", "kommode", "kiste", "ablage" …); nil if typed by hand.
+    /// What the AI took it for ("schrank", "regal", "kommode", "kiste", "ablage" ...); nil if typed by hand.
     public var form: String?
+    /// The type the user sees and can change (Schrank, Regalfach, Schublade, Kiste, an own type ...).
+    public var typeName: String?
+    public var note: String?
+    /// Last time the place itself was changed (renamed, moved, status, code, note).
+    public var changedAt: Date?
     public init(id: UUID = UUID(), roomID: UUID, name: String, kind: PlaceKind = .storage,
-                parentID: UUID? = nil, code: String? = nil, status: PlaceStatus? = nil, form: String? = nil) {
+                parentID: UUID? = nil, code: String? = nil, status: PlaceStatus? = nil, form: String? = nil,
+                typeName: String? = nil, note: String? = nil, changedAt: Date? = nil) {
         self.id = id; self.roomID = roomID; self.name = name
         self.kind = kind; self.parentID = parentID; self.code = code; self.status = status; self.form = form
+        self.typeName = typeName; self.note = note; self.changedAt = changedAt
+    }
+
+    /// The type to show: the chosen one, else derived from what the AI saw, else from the kind.
+    public var displayType: String {
+        if let typeName, !typeName.isEmpty { return typeName }
+        if let form { return PlaceTypes.name(forForm: form) }
+        return kind == .box ? "Kiste" : "Lagerort"
     }
 }
 
@@ -253,9 +296,14 @@ public struct PlaceInventoryItem: Identifiable, Codable, Equatable {
     public let source: String?
     /// When the item was put on this list (nil for entries made before this was recorded).
     public var addedAt: Date?
+    public var category: String?
+    /// Extra search words ("Bohrer", "Akku" ...).
+    public var tags: [String]?
+    public var modifiedAt: Date?
     public init(id: UUID = UUID(), name: String, count: String? = nil, note: String? = nil, source: String? = nil,
-                addedAt: Date? = nil) {
+                addedAt: Date? = nil, category: String? = nil, tags: [String]? = nil, modifiedAt: Date? = nil) {
         self.id = id; self.name = name; self.count = count; self.note = note; self.source = source; self.addedAt = addedAt
+        self.category = category; self.tags = tags; self.modifiedAt = modifiedAt
     }
 }
 
@@ -452,6 +500,8 @@ public struct HouseholdState: Codable, Equatable {
     public var inventories: [PlaceInventory] = []
     /// Codes printed on blank labels that are not tied to a place yet.
     public var reservedCodes: [String] = []
+    /// Place types the user added to the built-in list.
+    public var customPlaceTypes: [String] = []
     public init() {}
 
     // Files written before `analyses` existed stay readable (same schema version,
@@ -472,6 +522,7 @@ public struct HouseholdState: Codable, Equatable {
         learned = try c.decodeIfPresent([LearnedRoutine].self, forKey: .learned) ?? []
         inventories = try c.decodeIfPresent([PlaceInventory].self, forKey: .inventories) ?? []
         reservedCodes = try c.decodeIfPresent([String].self, forKey: .reservedCodes) ?? []
+        customPlaceTypes = try c.decodeIfPresent([String].self, forKey: .customPlaceTypes) ?? []
     }
 
     /// Remembers the AI-planned tasks as routines for the offline planner.
@@ -549,6 +600,30 @@ public struct HouseholdState: Codable, Equatable {
         places.filter { status == nil ? $0.status != nil : $0.status == status }
     }
 
+    /// Places directly inside the given place (or directly in the room when nil), by name.
+    public func children(of placeID: UUID?, inRoom roomID: UUID? = nil) -> [StoragePlace] {
+        places.filter { $0.parentID == placeID && (placeID != nil || roomID == nil || $0.roomID == roomID) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// When anything about the place last changed: the place itself, its list, or its photos.
+    public func lastChange(of placeID: UUID) -> Date? {
+        var dates: [Date] = []
+        if let place = places.first(where: { $0.id == placeID }), let changed = place.changedAt { dates.append(changed) }
+        if let inventory = latestInventory(placeID) {
+            dates.append(inventory.createdAt)
+            dates.append(contentsOf: inventory.items.compactMap { $0.modifiedAt ?? $0.addedAt })
+        }
+        dates.append(contentsOf: placePhotos(placeID).map(\.createdAt))
+        return dates.max()
+    }
+
+    /// Built-in and own place types, without duplicates.
+    public var placeTypes: [String] {
+        var seen = Set<String>()
+        return (PlaceTypes.defaults + customPlaceTypes).filter { seen.insert($0.lowercased()).inserted }
+    }
+
     /// The place and everything inside it, as ids.
     public func subtree(of placeID: UUID) -> Set<UUID> {
         var found: Set<UUID> = [placeID]
@@ -569,7 +644,10 @@ public struct HouseholdState: Codable, Equatable {
         guard !needle.isEmpty else { return [] }
         return places.flatMap { place -> [InventoryHit] in
             (latestInventory(place.id)?.items ?? [])
-                .filter { LocalPlanner.normalize($0.name).contains(needle) }
+                .filter { item in
+                    ([item.name, item.category ?? "", item.note ?? ""] + (item.tags ?? []))
+                        .contains { LocalPlanner.normalize($0).contains(needle) }
+                }
                 .map { InventoryHit(item: $0, placeID: place.id) }
         }
     }

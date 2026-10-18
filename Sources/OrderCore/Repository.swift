@@ -191,6 +191,7 @@ public final class HouseholdRepository {
                 throw OrderError.invalid("Dieser Code gehört schon zu „\(other.name)“.")
             }
             state.places[index].code = clean
+            state.places[index].changedAt = Date()
             state.reservedCodes.removeAll { $0.uppercased() == clean.uppercased() }
         }
     }
@@ -237,6 +238,7 @@ public final class HouseholdRepository {
                 }
             }
             state.places[index].parentID = parentID
+            state.places[index].changedAt = Date()
         }
     }
 
@@ -246,6 +248,54 @@ public final class HouseholdRepository {
                 throw OrderError.invalid("Dieser Lagerort existiert nicht mehr.")
             }
             state.places[index].status = status
+            state.places[index].changedAt = Date()
+        }
+    }
+
+    /// Changes what the user can edit about a place: name, type and note.
+    public func updatePlace(id: UUID, name: String, typeName: String?, note: String?) throws {
+        let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { throw OrderError.invalid("Bitte gib dem Ort einen Namen.") }
+        try transaction { state in
+            guard let index = state.places.firstIndex(where: { $0.id == id }) else {
+                throw OrderError.invalid("Dieser Lagerort existiert nicht mehr.")
+            }
+            state.places[index].name = clean
+            let type = (typeName?.trimmingCharacters(in: .whitespacesAndNewlines)).nilIfEmpty
+            state.places[index].typeName = type
+            if let type { state.places[index].kind = PlaceTypes.kind(for: type) }
+            state.places[index].note = (note?.trimmingCharacters(in: .whitespacesAndNewlines)).nilIfEmpty
+            state.places[index].changedAt = Date()
+        }
+    }
+
+    /// Adds an own place type to the list (ignored when it already exists).
+    public func addPlaceType(_ name: String) throws {
+        let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty, clean.count <= 40 else { throw OrderError.invalid("Bitte einen kurzen Namen für den Typ eingeben.") }
+        try transaction { state in
+            guard !state.placeTypes.contains(where: { $0.caseInsensitiveCompare(clean) == .orderedSame }) else { return }
+            state.customPlaceTypes.append(clean)
+        }
+    }
+
+    /// Edits a list entry: name, amount, note, category and search words.
+    public func updateInventoryItem(inventoryID: UUID, itemID: UUID, name: String, count: String?, note: String?,
+                                    category: String?, tags: [String]) throws {
+        let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { throw OrderError.invalid("Bitte gib dem Gegenstand einen Namen.") }
+        try transaction { state in
+            guard let inventoryIndex = state.inventories.firstIndex(where: { $0.id == inventoryID }),
+                  let itemIndex = state.inventories[inventoryIndex].items.firstIndex(where: { $0.id == itemID }) else {
+                throw OrderError.invalid("Dieser Eintrag existiert nicht mehr.")
+            }
+            let words = tags.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+            state.inventories[inventoryIndex].items[itemIndex].name = clean
+            state.inventories[inventoryIndex].items[itemIndex].count = (count?.trimmingCharacters(in: .whitespacesAndNewlines)).nilIfEmpty
+            state.inventories[inventoryIndex].items[itemIndex].note = (note?.trimmingCharacters(in: .whitespacesAndNewlines)).nilIfEmpty
+            state.inventories[inventoryIndex].items[itemIndex].category = (category?.trimmingCharacters(in: .whitespacesAndNewlines)).nilIfEmpty
+            state.inventories[inventoryIndex].items[itemIndex].tags = words.isEmpty ? nil : words
+            state.inventories[inventoryIndex].items[itemIndex].modifiedAt = Date()
         }
     }
 
@@ -474,7 +524,7 @@ public final class HouseholdRepository {
                     $0.roomID == roomID && $0.name.caseInsensitiveCompare(name) == .orderedSame
                 }) else { continue }
                 state.places.append(StoragePlace(roomID: roomID, name: name, kind: item.kind == "kiste" ? .box : .storage,
-                                                 form: item.kind))
+                                                 form: item.kind, typeName: PlaceTypes.name(forForm: item.kind)))
                 added += 1
             }
         }

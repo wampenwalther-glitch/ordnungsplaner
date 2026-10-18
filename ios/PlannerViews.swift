@@ -242,6 +242,7 @@ private struct SessionTimerView: View {
 struct TasksView: View {
     @EnvironmentObject private var model: AppModel
     @State private var adding = false
+    @State private var slip = false
     private var open: [HouseholdTask] { model.state.tasks.filter { !$0.isComplete } }
     var body: some View {
         List {
@@ -270,9 +271,13 @@ struct TasksView: View {
         }
         .navigationTitle("Aufgaben")
         .toolbar {
-            Button("Eigene Aufgabe", systemImage: "plus") { adding = true }.disabled(model.state.rooms.isEmpty)
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button("Tagesbon drucken", systemImage: "printer") { slip = true }
+                Button("Eigene Aufgabe", systemImage: "plus") { adding = true }.disabled(model.state.rooms.isEmpty)
+            }
         }
         .sheet(isPresented: $adding) { NewTaskForm() }
+        .sheet(isPresented: $slip) { SlipSheet() }
     }
 }
 
@@ -429,7 +434,16 @@ struct FindView: View {
             }
             Section(hits.isEmpty ? "" : "Lagerorte") {
                 ForEach(filteredPlaces) { place in
-                    NavigationLink { PlaceDetailView(placeID: place.id) } label: { PlaceRow(place: place) }
+                    NavigationLink { PlaceDetailView(placeID: place.id) } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            PlaceRow(place: place)
+                            // "Was ist in Kiste 07?" – the answer right in the list while searching
+                            if !query.isEmpty, let items = model.state.latestInventory(place.id)?.items, !items.isEmpty {
+                                Text(items.prefix(5).map(\.name).joined(separator: ", ") + (items.count > 5 ? " … (+\(items.count - 5))" : ""))
+                                    .font(.caption).foregroundStyle(.secondary).padding(.leading, 38)
+                            }
+                        }
+                    }
                 }
             }
             if model.state.places.isEmpty {

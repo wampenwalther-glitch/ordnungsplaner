@@ -33,6 +33,9 @@ struct SettingsView: View {
             Section("Zeit") {
                 NavigationLink { TimerSettingsView() } label: { Label("Timer und Hinweise", systemImage: "bell") }
             }
+            Section("Drucken") {
+                NavigationLink { PrinterProfilesView() } label: { Label("Druckerprofile (Etiketten, Bon)", systemImage: "printer") }
+            }
             Section {
                 LabeledContent("Fotos", value: "\(model.state.photos.count) · \(String(format: "%.1f MB", Double(model.state.photoBytes) / 1_000_000))")
                 let old = model.state.allOutdatedPhotos

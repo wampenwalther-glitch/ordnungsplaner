@@ -43,6 +43,16 @@ struct PlaceDetailView: View {
     @State private var confirmingEmpty = false
     @State private var labeling = false
     @State private var movingItem: MovingItem?
+    @State private var editingPlace: StoragePlace?
+    @State private var editingItem: EditingItem?
+    @State private var quickAdding = false
+    @State private var addingChild = false
+
+    struct EditingItem: Identifiable {
+        let id = UUID()
+        let inventoryID: UUID
+        let item: PlaceInventoryItem
+    }
 
     struct MovingItem: Identifiable {
         let id = UUID()
@@ -69,9 +79,11 @@ struct PlaceDetailView: View {
                 Card {
                     Label(model.state.path(for: placeID), systemImage: place.kind == .box ? "shippingbox" : "archivebox")
                         .font(.headline)
-                    if let code = place.code { Text("Code: \(code)").font(.subheadline.monospaced()).foregroundStyle(.secondary) }
-                    if let added = inventory?.items.compactMap(\.addedAt).max() {
-                        Text("Zuletzt hinzugefügt: \(added.formatted(.relative(presentation: .named)))").font(.caption).foregroundStyle(.secondary)
+                    Text([place.displayType, place.code.map { "Code \($0)" }].compactMap { $0 }.joined(separator: " · "))
+                        .font(.subheadline).foregroundStyle(.secondary)
+                    if let note = place.note { Label(note, systemImage: "note.text").font(.callout) }
+                    if let changed = model.state.lastChange(of: placeID) {
+                        Text("Zuletzt geändert: \(changed.formatted(.relative(presentation: .named)))").font(.caption).foregroundStyle(.secondary)
                     }
                     Menu {
                         Button("Kein Status", systemImage: "xmark") { model.perform { try $0.setPlaceStatus(id: placeID, status: nil) } }
@@ -85,17 +97,34 @@ struct PlaceDetailView: View {
                     .buttonStyle(.bordered)
                     HStack {
                         Button("Standort ändern", systemImage: "arrow.up.and.down.and.arrow.left.and.right") { moving = place }
-                        Button("Etikett", systemImage: "qrcode") { labeling = true }
+                        Button("Etikett neu drucken", systemImage: "qrcode") { labeling = true }
                     }
                     .buttonStyle(.bordered)
-                    Button("Als leer markieren", systemImage: "tray") { confirmingEmpty = true }
-                        .buttonStyle(.bordered)
+                    HStack {
+                        Button("Bearbeiten", systemImage: "pencil") { editingPlace = place }
+                        Button("Als leer markieren", systemImage: "tray") { confirmingEmpty = true }
+                    }
+                    .buttonStyle(.bordered)
+                    BigButton("Gegenstände einräumen", systemImage: "plus.rectangle.on.rectangle") { quickAdding = true }
                 }
                 .confirmationDialog("Als leer markieren?", isPresented: $confirmingEmpty, titleVisibility: .visible) {
                     Button("Ja, ist leer") { model.perform { try $0.markPlaceEmpty(placeID: placeID) } }
                     Button("Abbrechen", role: .cancel) {}
                 } message: {
                     Text("Die Gegenstandsliste dieses Ortes wird geleert. Frühere Listen bleiben als Verlauf erhalten.")
+                }
+
+                let children = model.state.children(of: placeID)
+                Card {
+                    Text("Enthält").font(.title3.bold())
+                    if children.isEmpty {
+                        Text("Keine Unterbereiche. Hier kannst du Fächer, Schubladen oder Kisten anlegen, die in diesem Ort stehen.")
+                            .font(.callout).foregroundStyle(.secondary)
+                    }
+                    ForEach(children) { child in
+                        NavigationLink { PlaceDetailView(placeID: child.id) } label: { PlaceRow(place: child) }.buttonStyle(.plain)
+                    }
+                    Button("Unterbereich hinzufügen", systemImage: "plus") { addingChild = true }
                 }
 
                 Card {
@@ -155,16 +184,21 @@ struct PlaceDetailView: View {
                         }
                         ForEach(inventory.items) { item in
                             HStack(alignment: .top, spacing: 8) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    HStack(spacing: 6) {
-                                        Text(item.count.map { "\($0)× \(item.name)" } ?? item.name)
-                                        if item.source == "ai" {
-                                            Text("KI").font(.caption2.bold()).padding(.horizontal, 5).padding(.vertical, 1)
-                                                .background(Color.accentColor.opacity(0.18), in: Capsule())
+                                Button { editingItem = EditingItem(inventoryID: inventory.id, item: item) } label: {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        HStack(spacing: 6) {
+                                            Text(item.count.map { "\($0)× \(item.name)" } ?? item.name).foregroundStyle(.primary)
+                                            if item.source == "ai" {
+                                                Text("KI").font(.caption2.bold()).padding(.horizontal, 5).padding(.vertical, 1)
+                                                    .background(Color.accentColor.opacity(0.18), in: Capsule())
+                                            }
                                         }
+                                        if let category = item.category { Text(category).font(.caption2).foregroundStyle(Color.accentColor) }
+                                        if let note = item.note { Text(note).font(.caption).foregroundStyle(.secondary) }
                                     }
-                                    if let note = item.note { Text(note).font(.caption).foregroundStyle(.secondary) }
+                                    .multilineTextAlignment(.leading)
                                 }
+                                .buttonStyle(.plain)
                                 Spacer(minLength: 0)
                                 Button { movingItem = MovingItem(inventoryID: inventory.id, item: item) } label: {
                                     Image(systemName: "arrow.right.circle").foregroundStyle(.secondary)
@@ -218,6 +252,14 @@ struct PlaceDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .sheet(item: $moving) { MovePlaceForm(place: $0) }
         .sheet(isPresented: $labeling) { LabelSheet(placeIDs: [placeID]) }
+        .sheet(item: $editingPlace) { PlaceEditSheet(place: $0) }
+        .sheet(item: $editingItem) { ItemEditSheet(inventoryID: $0.inventoryID, item: $0.item) }
+        .sheet(isPresented: $quickAdding) { QuickAddSheet(placeID: placeID) }
+        .sheet(isPresented: $addingChild) {
+            if let roomID = model.state.places.first(where: { $0.id == placeID })?.roomID {
+                PlaceForm(roomID: roomID, initialParent: placeID)
+            }
+        }
         .sheet(item: $movingItem) { moving in
             PlacePickerSheet(title: "Wohin mit „\(moving.item.name)“?", excluding: placeID) { target in
                 model.perform { try $0.moveInventoryItem(inventoryID: moving.inventoryID, itemID: moving.item.id, toPlace: target) }
