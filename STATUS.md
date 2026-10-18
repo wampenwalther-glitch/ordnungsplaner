@@ -18,6 +18,12 @@ Auf Franz' Wunsch nach dem ersten Gerätetest umgebaut. **Auf dem Gerät noch ni
 
 Franz hat getestet: KI-Plan über ChatGPT-Abo läuft, Abhaken und Timer funktionieren („richtig gut“). Neu seit dem KI-Ablauf: Handgriffe in der Aufgabe antippen = abhaken, beliebige Reihenfolge (`setStepDone`); Rundenuhr mit Countdown, Pause, +5 Min., Tempo-Hinweis, einstellbare Mitteilungen (`ios/TimerAlerts.swift`, Einstellungen → Timer und Hinweise). Letzter grüner Stand: Commit d23d4c0, CI-Lauf 39082841806. Ton im gesperrten Zustand: Franz hat es geprüft, Fokus/Stumm-Einstellungen können es beeinflussen.
 
+### NEU 18.10.2026 (Claude): Lagerorte mit Inhalt (CI grün, Lauf 39090719221; am Gerät noch NICHT geprüft)
+Franz: Lagerorte aus dem Bild erkennen (gab es: `detectedPlaces` + „Als Lagerorte übernehmen“), und **pro Lagerort in den Inhalt fotografieren** + Bestandsaufnahme (Erfassen oder Erfassen + Aufräumtipps).
+- Kern: `PhotoPoint.placeID` (automatischer Foto-Abschnitt „Inhalt“ je Lagerort), `placePhotos`, `PlaceInventory`/`PlaceInventoryItem`, `addPlacePhoto`, `recordInventory` (max. 3 je Ort), `addInventoryItem`/`removeInventoryItem`, `searchInventory`; `roomPhotos` zählt Lagerort-Fotos nicht mit. Tests: `InventoryTests.swift`.
+- App: `ios/PlaceViews.swift` (Lagerort-Seite: Fotos, KI-Bestandsaufnahme, Einträge löschen/ergänzen, Tipps → Aufgabe), Raumseite verlinkt dorthin, `Finden` durchsucht auch Gegenstände. `AIService.inventory` (zweites Schema „bestandsaufnahme“, gemeinsamer `run`-Weg mit dem Raumplan).
+- Grenzen: KI-Liste ist Beobachtung, kein geprüfter Bestand (Kennzeichnung „KI“, jeder Eintrag löschbar). Keine Aussage über freien Platz. Erkennung sehr kleiner/verdeckter Dinge ungeprüft. Fotos weiterhin Base64 in einer Datei (siehe Bitte 4).
+
 ### NEU 18.10.2026 (Claude): Offline-Planer + Hintergrund-Auswertung (CI grün, Lauf 39088857529; am Gerät noch NICHT geprüft)
 Franz: Wenn das ChatGPT-Kontingent leer ist, soll die App „trotzdem weiterlaufen“ und aus Gelerntem planen; die Fotoauswertung soll im Hintergrund laufen, mit Fortschritt in der Übersicht, Ergebnis gespeichert.
 - `Sources/OrderCore/LocalPlanner.swift`: 60 eingebaute Routinen (Raumtyp × Ziel × Energie × Zeit), `RoomKind.infer` aus dem Raumnamen, `Clutter` (18 Arten Unordnung, KI liefert sie als `muster`), `LearnedRoutine` (aus KI-Plänen, `HouseholdState.learn`), `latestAIAnalysis`/`isAnalysisCurrent`. Tests: `LocalPlannerTests.swift`.
