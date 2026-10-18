@@ -14,6 +14,19 @@ Auf Franz' Wunsch nach dem ersten Gerätetest umgebaut. **Auf dem Gerät noch ni
 - Offen/Risiken: echter KI-Lauf, Modellname, Kostenhinweis geprüft?, Fotos werden bei „Plan erstellen“ an OpenAI gesendet (Hinweis steht in der Oberfläche), Mehrräume teilen das Zeitbudget gleichmäßig, keine 3D-Rekonstruktion aus Fotos (Plan nutzt Fotos direkt), Tests der Oberfläche fehlen.
 - Codex darf wieder ändern. Bitte `Sources/`-Tests und Doku abgleichen; README/„Erster Ablauf“ ist überholt.
 
+## STAND 18.10.2026 nachts (Claude): auf Franz' iPhone abgenommen – Aufräumen-Assistent, Raumfotos, ChatGPT-Anmeldung, Abhaken, Timer
+
+Franz hat getestet: KI-Plan über ChatGPT-Abo läuft, Abhaken und Timer funktionieren („richtig gut“). Neu seit dem KI-Ablauf: Handgriffe in der Aufgabe antippen = abhaken, beliebige Reihenfolge (`setStepDone`); Rundenuhr mit Countdown, Pause, +5 Min., Tempo-Hinweis, einstellbare Mitteilungen (`ios/TimerAlerts.swift`, Einstellungen → Timer und Hinweise). Letzter grüner Stand: Commit d23d4c0, CI-Lauf 39082841806. Ton im gesperrten Zustand: Franz hat es geprüft, Fokus/Stumm-Einstellungen können es beeinflussen.
+
+### Bitten an Codex (Claude liefert nichts davon doppelt)
+1. README.md und die Abschnitte „Enthalten/Erster Ablauf“ auf den heutigen Stand bringen (alt: Fotopunkte, Heute/Mehr, manuelle Aufgaben).
+2. Aufräumen: nicht mehr erreichbaren Code prüfen (`PhotoPointView`, `NewPhotoPointForm`, Foto-Vergleich) – entfernen oder wieder einbinden, Entscheidung mit Franz.
+3. Tests: Kern ist abgedeckt (XCTest, Lauf grün). Fehlend: UI-/Snapshot-Tests, `AIRoomPlan.records` (Kürzung aufs Zeitbudget), SSE-Parser und Fehlertext-Zuordnung in `AIService` (aktuell nur über CI gebaut, nie gegen Beispiel-Antworten geprüft), Timer-Planung in `TimerAlerts`.
+4. Datenschutz/Robustheit: Fotos liegen als Base64 in einer JSON (siehe README „Datenspeicherung“) – getrennte Bilddateien, bevor es groß wird; EXIF-Aufnahmedatum; Sicherung enthält Fotos.
+5. iPad-Layout, Dynamic Type/VoiceOver-Durchgang, Dunkelmodus-Sichtprüfung.
+6. Offene Produktidee von Franz (nicht begonnen): Erinnerungen/Routinen, Kisteninhalt, Umzug zwischen Wohnungen, Verbindung zum Einkaufsplaner. Vor dem Bauen mit Franz abstimmen.
+Regeln unverändert: kleine Commits `[codex]`, CI grün vor Merge, keine echten Fotos/Schlüssel in Git. Claude arbeitet gerade nicht an Dateien – Codex darf frei ändern.
+
 ## UPDATE 18.10.2026 (Claude): „Mit ChatGPT verbinden“ statt API-Guthaben – CI grün (Lauf 39075372619), am Gerät NICHT geprüft
 
 Franz' API-Schlüssel lief auf „Limit/Guthaben“. Nach offizieller Prüfung (Details, Quellen, offene Punkte: `docs/OPENAI_ANBINDUNG.md`) nutzt die KI jetzt per „Sign in with ChatGPT“ sein ChatGPT-Abo (Plus/Pro). Neu: `ios/ChatGPTAuth.swift`; umgebaut: `ios/AIService.swift`, `ios/SettingsView.swift`, `StartFlow.swift` (Hinweis). API-Schlüssel bleibt als ausgeklappter Rückfall. **Ungeprüft/Risiko:** Registrierung eines iPhone-Clients über `dynamic_agent_client` (Doku nennt nur Loopback-Clients), Loopback-Empfang im Auth-Fenster, `json_schema` über diese Route (Rückfall eingebaut), Modellliste/Bild-Eingabe.
