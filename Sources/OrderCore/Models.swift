@@ -37,17 +37,63 @@ public enum PlaceKind: String, Codable, CaseIterable, Identifiable, Hashable {
     public var label: String { self == .box ? "Kiste" : "Lagerort" }
 }
 
+/// What is going to happen with a place and its contents (moving house, sorting out).
+/// The place keeps its identity (and QR code); only the status changes.
+public enum PlaceStatus: String, Codable, CaseIterable, Identifiable, Hashable {
+    case stays, packed, take, sell, donate, check
+    public var id: String { rawValue }
+    public var label: String {
+        switch self {
+        case .stays: return "Bleibt hier"
+        case .packed: return "Bereits gepackt"
+        case .take: return "Mitnehmen"
+        case .sell: return "Verkaufen"
+        case .donate: return "Spende"
+        case .check: return "Noch prüfen"
+        }
+    }
+    public var symbol: String {
+        switch self {
+        case .stays: return "house"
+        case .packed: return "shippingbox.fill"
+        case .take: return "arrow.right.circle"
+        case .sell: return "eurosign.circle"
+        case .donate: return "gift"
+        case .check: return "questionmark.circle"
+        }
+    }
+}
+
 public struct StoragePlace: Identifiable, Codable, Equatable {
     public let id: UUID
-    public let roomID: UUID
+    public var roomID: UUID
     public var name: String
     public var kind: PlaceKind
     public var parentID: UUID?
     public var code: String?
+    public var status: PlaceStatus?
     public init(id: UUID = UUID(), roomID: UUID, name: String, kind: PlaceKind = .storage,
-                parentID: UUID? = nil, code: String? = nil) {
+                parentID: UUID? = nil, code: String? = nil, status: PlaceStatus? = nil) {
         self.id = id; self.roomID = roomID; self.name = name
-        self.kind = kind; self.parentID = parentID; self.code = code
+        self.kind = kind; self.parentID = parentID; self.code = code; self.status = status
+    }
+}
+
+/// The text inside a place's QR code. Scanning it with the iPhone camera opens the
+/// app at exactly this place; the app's own scanner reads the same text.
+public enum PlaceLink {
+    public static let scheme = "ordnungsplaner"
+
+    public static func url(for placeID: UUID) -> URL {
+        URL(string: "\(scheme)://place/\(placeID.uuidString)")!
+    }
+
+    /// Reads a scanned text: the link, a bare UUID, or nothing usable.
+    public static func placeID(from text: String) -> UUID? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let id = UUID(uuidString: trimmed) { return id }
+        guard let url = URL(string: trimmed), url.scheme?.lowercased() == scheme, url.host?.lowercased() == "place" else { return nil }
+        return UUID(uuidString: url.lastPathComponent)
     }
 }
 
@@ -171,8 +217,11 @@ public struct PlaceInventoryItem: Identifiable, Codable, Equatable {
     public var note: String?
     /// "ai" or "manual"
     public let source: String?
-    public init(id: UUID = UUID(), name: String, count: String? = nil, note: String? = nil, source: String? = nil) {
-        self.id = id; self.name = name; self.count = count; self.note = note; self.source = source
+    /// When the item was put on this list (nil for entries made before this was recorded).
+    public var addedAt: Date?
+    public init(id: UUID = UUID(), name: String, count: String? = nil, note: String? = nil, source: String? = nil,
+                addedAt: Date? = nil) {
+        self.id = id; self.name = name; self.count = count; self.note = note; self.source = source; self.addedAt = addedAt
     }
 }
 
@@ -425,6 +474,29 @@ public struct HouseholdState: Codable, Equatable {
     public func placePhotos(_ placeID: UUID) -> [RoomPhoto] {
         let points = Set(photoPoints.filter { $0.placeID == placeID }.map(\.id))
         return photos.filter { points.contains($0.pointID) }.sorted { $0.createdAt < $1.createdAt }
+    }
+
+    /// Finds the place a scan refers to: a QR link or UUID, otherwise the printed code (e.g. "K07").
+    public func place(forScan text: String) -> StoragePlace? {
+        if let id = PlaceLink.placeID(from: text) { return places.first { $0.id == id } }
+        let code = text.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard !code.isEmpty else { return nil }
+        return places.first { $0.code?.uppercased() == code }
+    }
+
+    /// Places with the given status (all places with any status when nil).
+    public func places(with status: PlaceStatus?) -> [StoragePlace] {
+        places.filter { status == nil ? $0.status != nil : $0.status == status }
+    }
+
+    /// The place and everything inside it, as ids.
+    public func subtree(of placeID: UUID) -> Set<UUID> {
+        var found: Set<UUID> = [placeID]
+        var frontier = [placeID]
+        while let current = frontier.popLast() {
+            for child in places where child.parentID == current && found.insert(child.id).inserted { frontier.append(child.id) }
+        }
+        return found
     }
 
     public func latestInventory(_ placeID: UUID) -> PlaceInventory? {

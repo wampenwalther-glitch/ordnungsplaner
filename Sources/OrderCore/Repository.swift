@@ -154,12 +154,115 @@ public final class HouseholdRepository {
         try transaction { $0.places.append(place) }
     }
 
-    public func movePlace(id: UUID, parentID: UUID?) throws {
+    /// Moves a place (with everything inside it) under another place – or, with `parentID == nil`,
+    /// directly into a room. `roomID` moves it to another room; its sub-places and
+    /// photo sections follow. Steps of old tasks that aimed at it lose that aim (the hint stays).
+    public func movePlace(id: UUID, parentID: UUID?, roomID: UUID? = nil) throws {
         try transaction { state in
             guard let index = state.places.firstIndex(where: { $0.id == id }) else {
                 throw OrderError.invalid("Dieser Lagerort existiert nicht mehr.")
             }
+            let oldRoom = state.places[index].roomID
+            let targetRoom = roomID ?? oldRoom
+            guard state.rooms.contains(where: { $0.id == targetRoom }) else {
+                throw OrderError.invalid("Dieser Raum existiert nicht mehr.")
+            }
+            let moved = state.subtree(of: id)
+            if let parentID {
+                guard let parent = state.places.first(where: { $0.id == parentID }) else {
+                    throw OrderError.invalid("Der Ziel-Lagerort existiert nicht mehr.")
+                }
+                guard !moved.contains(parentID) else {
+                    throw OrderError.invalid("Ein Lagerort darf nicht in sich selbst oder in einem seiner Unterorte stehen.")
+                }
+                guard parent.roomID == targetRoom else {
+                    throw OrderError.invalid("Der Ziel-Lagerort liegt in einem anderen Raum.")
+                }
+            }
+            if targetRoom != oldRoom {
+                for i in state.places.indices where moved.contains(state.places[i].id) { state.places[i].roomID = targetRoom }
+                state.photoPoints = state.photoPoints.map { point in
+                    guard let placeID = point.placeID, moved.contains(placeID) else { return point }
+                    return PhotoPoint(id: point.id, roomID: targetRoom, name: point.name, placeID: placeID)
+                }
+                for t in state.tasks.indices where state.tasks[t].roomID != targetRoom {
+                    for s in state.tasks[t].steps.indices {
+                        let old = state.tasks[t].steps[s]
+                        guard let target = old.targetPlaceID, moved.contains(target) else { continue }
+                        var rebuilt = ActionStep(id: old.id, text: old.text, targetPlaceID: nil, hint: old.hint)
+                        rebuilt.completedAt = old.completedAt
+                        state.tasks[t].steps[s] = rebuilt
+                    }
+                }
+            }
             state.places[index].parentID = parentID
+        }
+    }
+
+    public func setPlaceStatus(id: UUID, status: PlaceStatus?) throws {
+        try transaction { state in
+            guard let index = state.places.firstIndex(where: { $0.id == id }) else {
+                throw OrderError.invalid("Dieser Lagerort existiert nicht mehr.")
+            }
+            state.places[index].status = status
+        }
+    }
+
+    /// The short printed code of a place (K07 for boxes, L03 for shelves …); assigned the first time it is needed.
+    @discardableResult
+    public func ensureLabelCode(placeID: UUID) throws -> String {
+        if let code = state.places.first(where: { $0.id == placeID })?.code, !code.isEmpty { return code }
+        try transaction { state in
+            guard let index = state.places.firstIndex(where: { $0.id == placeID }) else {
+                throw OrderError.invalid("Dieser Lagerort existiert nicht mehr.")
+            }
+            let prefix = state.places[index].kind == .box ? "K" : "L"
+            let used = Set(state.places.compactMap { $0.code?.uppercased() })
+            var number = 1
+            while used.contains("\(prefix)\(number < 10 ? "0" : "")\(number)") { number += 1 }
+            state.places[index].code = "\(prefix)\(number < 10 ? "0" : "")\(number)"
+        }
+        return state.places.first(where: { $0.id == placeID })?.code ?? ""
+    }
+
+    /// Puts a list item into another place (new entry there, removed from the old list).
+    public func moveInventoryItem(inventoryID: UUID, itemID: UUID, toPlace placeID: UUID) throws {
+        try transaction { state in
+            guard let inventoryIndex = state.inventories.firstIndex(where: { $0.id == inventoryID }),
+                  let itemIndex = state.inventories[inventoryIndex].items.firstIndex(where: { $0.id == itemID }) else {
+                throw OrderError.invalid("Dieser Eintrag existiert nicht mehr.")
+            }
+            guard state.places.contains(where: { $0.id == placeID }) else {
+                throw OrderError.invalid("Der Ziel-Lagerort existiert nicht mehr.")
+            }
+            guard state.inventories[inventoryIndex].placeID != placeID else {
+                throw OrderError.invalid("Dieser Gegenstand liegt schon dort.")
+            }
+            let old = state.inventories[inventoryIndex].items.remove(at: itemIndex)
+            Self.append(PlaceInventoryItem(name: old.name, count: old.count, note: old.note, source: old.source, addedAt: Date()),
+                        toPlace: placeID, in: &state)
+        }
+    }
+
+    /// Records that the place has been checked and is empty.
+    public func markPlaceEmpty(placeID: UUID) throws {
+        try transaction { state in
+            guard state.places.contains(where: { $0.id == placeID }) else {
+                throw OrderError.invalid("Dieser Lagerort existiert nicht mehr.")
+            }
+            state.inventories.append(PlaceInventory(placeID: placeID, photoIDs: [], summary: "Als leer markiert", items: []))
+            let mine = state.inventories.filter { $0.placeID == placeID }.sorted { $0.createdAt > $1.createdAt }
+            let drop = Set(mine.dropFirst(3).map(\.id))
+            state.inventories.removeAll { drop.contains($0.id) }
+        }
+    }
+
+    private static func append(_ item: PlaceInventoryItem, toPlace placeID: UUID, in state: inout HouseholdState) {
+        let mine = state.inventories.enumerated().filter { $0.element.placeID == placeID }
+        if let latest = mine.max(by: { $0.element.createdAt < $1.element.createdAt }) {
+            state.inventories[latest.offset].items.append(item)
+        } else {
+            state.inventories.append(PlaceInventory(placeID: placeID, photoIDs: [], summary: "", items: [item]))
         }
     }
 
@@ -238,13 +341,9 @@ public final class HouseholdRepository {
             }
             let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !clean.isEmpty else { throw OrderError.invalid("Bitte gib einen Namen für den Gegenstand ein.") }
-            let item = PlaceInventoryItem(name: clean, count: (count?.trimmingCharacters(in: .whitespacesAndNewlines)).nilIfEmpty, source: "manual")
-            let mine = state.inventories.enumerated().filter { $0.element.placeID == placeID }
-            if let latest = mine.max(by: { $0.element.createdAt < $1.element.createdAt }) {
-                state.inventories[latest.offset].items.append(item)
-            } else {
-                state.inventories.append(PlaceInventory(placeID: placeID, photoIDs: [], summary: "", items: [item]))
-            }
+            let item = PlaceInventoryItem(name: clean, count: (count?.trimmingCharacters(in: .whitespacesAndNewlines)).nilIfEmpty,
+                                          source: "manual", addedAt: Date())
+            Self.append(item, toPlace: placeID, in: &state)
         }
     }
 
