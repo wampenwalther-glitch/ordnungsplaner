@@ -271,8 +271,8 @@ private struct TaskRow: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(task.title).font(.headline)
-                if task.source == .ai {
-                    Text("KI").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2)
+                if task.source == .ai || task.source == .local {
+                    Text(task.source == .ai ? "KI" : "Routine").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2)
                         .background(Color.accentColor.opacity(0.18), in: Capsule())
                 }
             }

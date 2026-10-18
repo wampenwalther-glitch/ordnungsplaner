@@ -167,7 +167,23 @@ public final class HouseholdRepository {
             }
             state.analyses.append(contentsOf: analyses)
             state.tasks.append(contentsOf: tasks)
+            for room in state.rooms {
+                state.learn(from: tasks.filter { $0.roomID == room.id }, roomName: room.name)
+            }
             state.session = WorkSession(taskIDs: tasks.map(\.id), goal: goal, timeBudget: minutes, energy: energy)
+        }
+    }
+
+    /// Stores a room analysis from a background AI look. The tasks the AI
+    /// proposed in the same answer are not added to the list; they are only
+    /// remembered as routines for the offline planner.
+    public func recordAnalysis(_ analysis: RoomAnalysis, learningFrom tasks: [HouseholdTask]) throws {
+        try transaction { state in
+            guard let room = state.rooms.first(where: { $0.id == analysis.roomID }) else {
+                throw OrderError.invalid("Dieser Raum existiert nicht mehr.")
+            }
+            state.analyses.append(analysis)
+            state.learn(from: tasks, roomName: room.name)
         }
     }
 

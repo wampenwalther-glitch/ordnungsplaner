@@ -3,6 +3,7 @@ import OrderCore
 
 struct SettingsView: View {
     @AppStorage("appearance") private var appearance = Appearance.system.rawValue
+    @EnvironmentObject private var model: AppModel
     @ObservedObject private var auth = ChatGPTAuth.shared
     @State private var hasKey = AIKeyStore.hasKey
 
@@ -21,6 +22,9 @@ struct SettingsView: View {
             }
             Section("KI") {
                 NavigationLink { AISettingsView() } label: { LabeledContent("KI-Zugang", value: aiStatus) }
+                LabeledContent("Gelernte Routinen", value: "\(model.state.learned.count)")
+                Text("Wenn die KI mal nicht erreichbar ist, plant die App aus ca. \(LocalPlanner.rules.count) eingebauten Routinen und denen, die die KI dir früher vorgeschlagen hat.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section("Zeit") {
                 NavigationLink { TimerSettingsView() } label: { Label("Timer und Hinweise", systemImage: "bell") }

@@ -51,6 +51,9 @@ struct AIRoomPlan: Decodable {
     let lagerorte: [Place]
     let problemzonen: [String]
     let aufgaben: [Task]
+    /// Kinds of clutter seen (raw values of `Clutter`); optional because the
+    /// fallback route without a strict schema may leave it out.
+    let muster: [String]?
 }
 
 enum AIAccess {
@@ -84,15 +87,17 @@ enum AIService {
 
     // MARK: Analysis
 
+    /// With photos: the AI looks at them. Without photos but with `analysis`: text-only
+    /// planning from what an earlier look saw (fast, no upload).
     static func analyze(roomName: String, photos: [Data], knownPlaces: [String], goal: Goal,
-                        minutes: Int, energy: Energy) async throws -> AIRoomPlan {
+                        minutes: Int, energy: Energy, analysis: RoomAnalysis? = nil) async throws -> AIRoomPlan {
         guard ChatGPTAuth.shared.isConnected || AIKeyStore.hasKey else {
             throw OrderError.invalid("Die KI ist noch nicht eingerichtet. Verbinde dich unter Einstellungen → KI mit ChatGPT.")
         }
         let images = photos.compactMap(uploadJPEG)
-        guard !images.isEmpty else { throw OrderError.invalid("Für \(roomName) gibt es noch keine lesbaren Fotos.") }
+        guard !images.isEmpty || analysis != nil else { throw OrderError.invalid("Für \(roomName) gibt es noch keine lesbaren Fotos.") }
         let text = prompt(roomName: roomName, photoCount: images.count, knownPlaces: knownPlaces,
-                          goal: goal, minutes: minutes, energy: energy)
+                          goal: goal, minutes: minutes, energy: energy, analysis: analysis)
         do {
             if ChatGPTAuth.shared.isConnected { return try await viaChatGPT(text: text, images: images) }
             return try await viaAPIKey(text: text, images: images)
@@ -362,7 +367,26 @@ enum AIService {
     // MARK: Prompt and schema
 
     private static func prompt(roomName: String, photoCount: Int, knownPlaces: [String], goal: Goal,
-                               minutes: Int, energy: Energy) -> String {
+                               minutes: Int, energy: Energy, analysis: RoomAnalysis?) -> String {
+        let intro: String
+        if photoCount == 0, let analysis {
+            let found = analysis.detectedPlaces.map(\.name).joined(separator: ", ")
+            intro = """
+            Du bist ein ruhiger, praktischer Aufräum-Coach. Du siehst keine Fotos, kennst aber den Raum „\(roomName)“ \
+            aus einer früheren Auswertung seiner Fotos:
+            Zusammenfassung: \(analysis.summary)
+            Baustellen: \(analysis.problemZones.joined(separator: "; "))
+            Aufbewahrung: \(found.isEmpty ? "keine erkannt" : found)
+            Plane nur auf dieser Grundlage und erfinde nichts dazu.
+            """
+        } else {
+            intro = """
+            Du bist ein ruhiger, praktischer Aufräum-Coach. Du siehst \(photoCount) Fotos desselben Raums „\(roomName)“ \
+            aus verschiedenen Blickwinkeln. Setze sie gedanklich zu einem Raum zusammen; Dinge, die auf mehreren Fotos \
+            auftauchen, zählen nur einmal.
+            """
+        }
+        let patterns = Clutter.allCases.map(\.rawValue).joined(separator: ", ")
         let goalText: String
         switch goal {
         case .order: goalText = "Dauerhafte Ordnung: Dingen feste, passende Plätze geben, Ablagen leeren, Ordnung soll bleiben."
@@ -378,9 +402,7 @@ enum AIService {
         }
         let places = knownPlaces.isEmpty ? "keine" : knownPlaces.joined(separator: ", ")
         return """
-        Du bist ein ruhiger, praktischer Aufräum-Coach. Du siehst \(photoCount) Fotos desselben Raums „\(roomName)“ \
-        aus verschiedenen Blickwinkeln. Setze sie gedanklich zu einem Raum zusammen; Dinge, die auf mehreren Fotos \
-        auftauchen, zählen nur einmal.
+        \(intro)
 
         Ziel: \(goalText)
         Zeit für diesen Raum: etwa \(minutes) Minuten. Energie: \(energyText)
@@ -391,6 +413,7 @@ enum AIService {
         - lagerorte: sichtbare Möbel oder Behälter, in die man etwas räumen kann (Regal, Schrank, Kommode, Kiste, Ablage). \
         art ist eines von: regal, schrank, kommode, kiste, ablage, sonstiges. Keine Aussage über freien Platz oder Inhalt.
         - problemzonen: kurze Stellen mit Unordnung oder Dingen ohne festen Platz, z. B. „Kleiderstapel auf dem Stuhl“.
+        - muster: welche dieser Arten von Unordnung im Raum wirklich vorkommen (nur aus dieser Liste, sonst weglassen): \(patterns).
         - startpunkt: ein konkreter Ort, wo man in einer Minute sichtbar Erfolg hat, mit kurzer Begründung.
         - aufgaben: in sinnvoller Reihenfolge, zusammen höchstens \(minutes) Minuten. Jede Aufgabe 2–6 Handgriffe.
         - Ein Handgriff ist ein einzelner, sofort ausführbarer Schritt, beginnt mit einem Verb und nennt den Gegenstand, \
@@ -403,7 +426,7 @@ enum AIService {
 
     private static let schemaHint = """
     {"zusammenfassung": string, "startpunkt": string, "lagerorte": [{"name": string, "art": "regal"|"schrank"|"kommode"|"kiste"|"ablage"|"sonstiges", "hinweis": string}], \
-    "problemzonen": [string], "aufgaben": [{"titel": string, "minuten": Zahl, "energie": "wenig"|"normal"|"viel", "handgriffe": [{"text": string, "zielort": string}]}]}
+    "problemzonen": [string], "muster": [string], "aufgaben": [{"titel": string, "minuten": Zahl, "energie": "wenig"|"normal"|"viel", "handgriffe": [{"text": string, "zielort": string}]}]}
     """
 
     private static let schema: [String: Any] = {
@@ -417,7 +440,8 @@ enum AIService {
         let place = obj(["name": str(), "art": ["type": "string", "enum": ["regal", "schrank", "kommode", "kiste", "ablage", "sonstiges"]],
                          "hinweis": str()])
         return obj(["zusammenfassung": str(), "startpunkt": str(), "lagerorte": ["type": "array", "items": place],
-                    "problemzonen": ["type": "array", "items": str()], "aufgaben": ["type": "array", "items": task]])
+                    "problemzonen": ["type": "array", "items": str()], "aufgaben": ["type": "array", "items": task],
+                    "muster": ["type": "array", "items": ["type": "string", "enum": Clutter.allCases.map(\.rawValue)]]])
     }()
 }
 
@@ -426,7 +450,8 @@ extension AIRoomPlan {
     /// model's order, trimmed to the time budget (at least one task survives).
     func records(roomID: UUID, photoIDs: [UUID], goal: Goal, minutes: Int) -> (RoomAnalysis, [HouseholdTask]) {
         let analysis = RoomAnalysis(roomID: roomID, goal: goal, photoIDs: photoIDs, summary: zusammenfassung, startHint: startpunkt,
-            detectedPlaces: lagerorte.map { DetectedPlace(name: $0.name, kind: $0.art, note: $0.hinweis) }, problemZones: problemzonen)
+            detectedPlaces: lagerorte.map { DetectedPlace(name: $0.name, kind: $0.art, note: $0.hinweis) }, problemZones: problemzonen,
+            tags: (muster ?? []).filter { Clutter(rawValue: $0) != nil })
         var remaining = minutes
         var tasks: [HouseholdTask] = []
         for item in aufgaben {

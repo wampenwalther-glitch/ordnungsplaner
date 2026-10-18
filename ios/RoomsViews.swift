@@ -22,6 +22,7 @@ struct RoomsView: View {
                 }
                 .padding(.top, 60)
             }
+            AnalysisBanner().padding(.horizontal).padding(.top, 8)
             LazyVGrid(columns: columns, spacing: 12) {
                 ForEach(model.state.rooms) { room in
                     NavigationLink { RoomDetailView(roomID: room.id) } label: { RoomCard(room: room) }
@@ -37,9 +38,55 @@ struct RoomsView: View {
     }
 }
 
+/// Shows how far the AI is with looking at the rooms' photos, or offers to start it.
+private struct AnalysisBanner: View {
+    @EnvironmentObject private var model: AppModel
+    @ObservedObject private var auth = ChatGPTAuth.shared
+    var body: some View {
+        if let progress = model.analysisProgress {
+            Card {
+                Label("KI wertet deine Fotos aus", systemImage: "eye").font(.headline)
+                ProgressView(value: Double(progress.done), total: Double(max(progress.total, 1)))
+                Text("\(progress.done) von \(progress.total) Räumen fertig. Du kannst die App ruhig verlassen – das Ergebnis wird gespeichert.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        } else if AIAccess.isReady || auth.isConnected, !model.roomsNeedingAnalysis.isEmpty {
+            let rooms = model.roomsNeedingAnalysis
+            Card {
+                Label("Neue Fotos warten", systemImage: "photo.badge.checkmark").font(.headline)
+                Text("Die KI kann sich \(rooms.count == 1 ? "diesen Raum" : "diese \(rooms.count) Räume") ansehen und merkt sich, was dort typischerweise rumliegt. Das hilft auch, wenn die KI mal nicht erreichbar ist.")
+                    .font(.callout).foregroundStyle(.secondary)
+                BigButton("Von der KI ansehen lassen", systemImage: "eye") { model.analyzeRooms(rooms.map(\.id)) }
+            }
+        }
+    }
+}
+
 private struct RoomCard: View {
     let room: Room
     @EnvironmentObject private var model: AppModel
+
+    @ViewBuilder private var statusLine: some View {
+        let photos = model.state.roomPhotos(room.id)
+        switch model.analysisStatus[room.id] {
+        case .running:
+            HStack(spacing: 6) { ProgressView().controlSize(.mini); Text("KI schaut …").font(.caption) }
+        case .queued:
+            Label("Wartet auf die KI", systemImage: "clock").font(.caption).foregroundStyle(.secondary)
+        case .failed:
+            Label("Auswertung fehlgeschlagen", systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
+        case nil:
+            if photos.isEmpty {
+                Text("Fotos fehlen").font(.caption).foregroundStyle(Color.orange)
+            } else if let analysis = model.state.latestAIAnalysis(room.id), model.state.isAnalysisCurrent(room.id) {
+                Label("Von der KI ausgewertet · \(analysis.createdAt.formatted(.relative(presentation: .named)))",
+                      systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(Color.accentColor)
+            } else {
+                Text("\(photos.count) Fotos · noch nicht ausgewertet").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
     var body: some View {
         let photos = model.state.roomPhotos(room.id)
         VStack(alignment: .leading, spacing: 0) {
@@ -55,8 +102,7 @@ private struct RoomCard: View {
             .clipped()
             VStack(alignment: .leading, spacing: 2) {
                 Text(room.name).font(.headline).lineLimit(1)
-                Text(photos.isEmpty ? "Fotos fehlen" : "\(photos.count) Fotos")
-                    .font(.caption).foregroundStyle(photos.isEmpty ? Color.orange : Color.secondary)
+                statusLine
             }
             .padding(10)
         }
@@ -189,14 +235,15 @@ struct RoomDetailView: View {
     @State private var addingPlace = false
     @State private var showingScan = false
     @State private var movingPlace: StoragePlace?
-    @State private var looking = false
     @State private var lookError: String?
     @State private var adoptedMessage: String?
+    @ObservedObject private var auth = ChatGPTAuth.shared
     private let lidar = RoomCaptureSession.isSupported
 
     var body: some View {
         let places = model.state.places.filter { $0.roomID == roomID }
-        let analysis = model.state.latestAnalysis(roomID)
+        let analysis = model.state.latestAIAnalysis(roomID)
+        let status = model.analysisStatus[roomID]
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Card {
@@ -234,14 +281,28 @@ struct RoomDetailView: View {
                         Text("Die KI erkennt Regale, Schränke und Kisten und zeigt, wo Unordnung ist.")
                             .foregroundStyle(.secondary)
                     }
-                    if looking {
-                        HStack { ProgressView(); Text(model.planningStatus ?? "Die KI schaut …") }
-                    } else {
+                    switch status {
+                    case .running:
+                        HStack { ProgressView(); Text("Die KI schaut sich den Raum an – das läuft im Hintergrund weiter.") }
+                    case .queued:
+                        Label("Wartet, bis die KI an der Reihe ist.", systemImage: "clock").foregroundStyle(.secondary)
+                    default:
+                        if analysis != nil && model.state.isAnalysisCurrent(roomID) {
+                            Label("Alle aktuellen Fotos sind ausgewertet.", systemImage: "checkmark.circle.fill")
+                                .font(.callout).foregroundStyle(Color.accentColor)
+                        }
                         Button(analysis == nil ? "Raum von der KI ansehen lassen" : "Neu ansehen lassen", systemImage: "eye") {
-                            Task { await look() }
+                            lookError = nil
+                            model.analyzeRooms([roomID])
                         }
                         .buttonStyle(.bordered)
-                        .disabled(model.state.roomPhotos(roomID).isEmpty)
+                        .disabled(model.state.roomPhotos(roomID).isEmpty || !(AIAccess.isReady || auth.isConnected))
+                        if !(AIAccess.isReady || auth.isConnected) {
+                            Text("Dafür die KI unter Einstellungen → KI verbinden.").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    if case .failed(let message) = status {
+                        Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.red)
                     }
                     if let lookError { Label(lookError, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
                 }
@@ -282,13 +343,5 @@ struct RoomDetailView: View {
                 try model.saveScan(scan, roomID: roomID)
             }
         }
-    }
-
-    private func look() async {
-        lookError = nil
-        adoptedMessage = nil
-        looking = true
-        defer { looking = false }
-        do { try await model.lookAtRoom(roomID) } catch { lookError = error.localizedDescription }
     }
 }

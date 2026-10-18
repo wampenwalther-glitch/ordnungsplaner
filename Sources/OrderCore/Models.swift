@@ -63,7 +63,9 @@ public struct ActionStep: Identifiable, Codable, Equatable {
     }
 }
 
-public enum TaskSource: String, Codable, Equatable { case manual, ai }
+/// Where a task came from: typed by the user, planned by the AI, or built from
+/// the built-in routines when the AI is unavailable.
+public enum TaskSource: String, Codable, Equatable { case manual, ai, local }
 
 public struct HouseholdTask: Identifiable, Codable, Equatable {
     public let id: UUID
@@ -205,12 +207,110 @@ public struct RoomAnalysis: Identifiable, Codable, Equatable {
     public let startHint: String
     public let detectedPlaces: [DetectedPlace]
     public let problemZones: [String]
+    /// Kinds of clutter the AI saw (`Clutter` raw values); this is what the
+    /// offline planner builds on. nil in analyses saved before it existed.
+    public let tags: [String]?
     public init(id: UUID = UUID(), roomID: UUID, createdAt: Date = Date(), goal: Goal, photoIDs: [UUID],
-                summary: String, startHint: String, detectedPlaces: [DetectedPlace], problemZones: [String]) {
+                summary: String, startHint: String, detectedPlaces: [DetectedPlace], problemZones: [String],
+                tags: [String] = []) {
         self.id = id; self.roomID = roomID; self.createdAt = createdAt; self.goal = goal; self.photoIDs = photoIDs
         self.summary = summary; self.startHint = startHint
-        self.detectedPlaces = detectedPlaces; self.problemZones = problemZones
+        self.detectedPlaces = detectedPlaces; self.problemZones = problemZones; self.tags = tags
     }
+}
+
+/// Recurring kinds of clutter. The AI reports them for a room, the user can tick
+/// them by hand, and the built-in routines are keyed on them.
+public enum Clutter: String, Codable, CaseIterable, Identifiable, Hashable {
+    case dishes, laundry, trash, papers, shoes, toys, cables, bottles, clothes, bed
+    case dust, floor, surfaces, fridge, cosmetics, towels, books, pets
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .dishes: return "Geschirr und Gläser"
+        case .laundry: return "Wäsche"
+        case .trash: return "Müll"
+        case .papers: return "Post und Papiere"
+        case .shoes: return "Schuhe und Jacken"
+        case .toys: return "Spielzeug"
+        case .cables: return "Kabel und Ladegeräte"
+        case .bottles: return "Flaschen und Pfand"
+        case .clothes: return "Kleidung auf Stuhl oder Boden"
+        case .bed: return "Ungemachtes Bett"
+        case .dust: return "Staub"
+        case .floor: return "Dinge auf dem Boden"
+        case .surfaces: return "Volle Tische und Flächen"
+        case .fridge: return "Kühlschrank"
+        case .cosmetics: return "Kosmetik und Bad-Kram"
+        case .towels: return "Handtücher"
+        case .books: return "Bücher und Zeitschriften"
+        case .pets: return "Haustierzeug"
+        }
+    }
+
+    /// Lower-case word stems used to read the kind of clutter out of free text.
+    var keywords: [String] {
+        switch self {
+        case .dishes: return ["teller", "geschirr", "tasse", "glas", "gläser", "besteck", "spüle"]
+        case .laundry: return ["wäsche", "waesche", "wäschekorb", "socken"]
+        case .trash: return ["müll", "muell", "verpackung", "abfall"]
+        case .papers: return ["post", "papier", "briefe", "rechnung", "unterlagen"]
+        case .shoes: return ["schuh", "jacke", "mantel"]
+        case .toys: return ["spielzeug", "lego", "puppe"]
+        case .cables: return ["kabel", "ladegerät", "ladegeraet"]
+        case .bottles: return ["flasche", "pfand", "dose"]
+        case .clothes: return ["kleidung", "kleider", "pullover", "hose", "shirt"]
+        case .bed: return ["bett", "decke", "kissen"]
+        case .dust: return ["staub"]
+        case .floor: return ["boden", "teppich", "krümel"]
+        case .surfaces: return ["tisch", "fläche", "flaeche", "arbeitsplatte", "ablage", "schreibtisch"]
+        case .fridge: return ["kühlschrank", "kuehlschrank"]
+        case .cosmetics: return ["kosmetik", "zahnbürste", "creme", "schminke"]
+        case .towels: return ["handtuch", "handtücher"]
+        case .books: return ["buch", "bücher", "zeitschrift"]
+        case .pets: return ["katze", "hund", "futter", "haustier"]
+        }
+    }
+}
+
+/// Rough room type, read from the room's name; decides which routines fit.
+public enum RoomKind: String, Codable, CaseIterable, Hashable {
+    case kitchen, living, bedroom, bathroom, hallway, office, kids, storage, other
+
+    public static func infer(_ name: String) -> RoomKind {
+        let text = name.lowercased()
+        func has(_ words: [String]) -> Bool { words.contains { text.contains($0) } }
+        if has(["küche", "kueche"]) { return .kitchen }
+        if has(["bad", "wc", "toilette", "dusche"]) { return .bathroom }
+        if has(["schlaf", "gäste", "gaeste"]) { return .bedroom }
+        if has(["kinder", "spielzimmer", "baby"]) { return .kids }
+        if has(["arbeit", "büro", "buero", "office", "homeoffice"]) { return .office }
+        if has(["flur", "diele", "eingang", "windfang"]) { return .hallway }
+        if has(["keller", "abstell", "dachboden", "speicher", "garage", "lager"]) { return .storage }
+        if has(["wohn", "stube", "ess", "salon"]) { return .living }
+        return .other
+    }
+}
+
+public struct LearnedStep: Codable, Equatable {
+    public let text: String
+    public let hint: String?
+    public init(text: String, hint: String?) { self.text = text; self.hint = hint }
+}
+
+/// A routine the AI once proposed for this kind of room. Kept so the offline
+/// planner can offer it again; it counts how often the AI suggested it.
+public struct LearnedRoutine: Identifiable, Codable, Equatable {
+    public let id: UUID
+    public let title: String
+    public let kind: RoomKind
+    public let goal: Goal
+    public let minutes: Int
+    public let energy: Energy
+    public let steps: [LearnedStep]
+    public var seen: Int
+    public var lastSeen: Date
 }
 
 public struct HouseholdState: Codable, Equatable {
@@ -226,6 +326,7 @@ public struct HouseholdState: Codable, Equatable {
     public var events: [CompletionEvent] = []
     public var undoRecord: UndoRecord?
     public var analyses: [RoomAnalysis] = []
+    public var learned: [LearnedRoutine] = []
     public init() {}
 
     // Files written before `analyses` existed stay readable (same schema version,
@@ -243,6 +344,29 @@ public struct HouseholdState: Codable, Equatable {
         events = try c.decode([CompletionEvent].self, forKey: .events)
         undoRecord = try c.decodeIfPresent(UndoRecord.self, forKey: .undoRecord)
         analyses = try c.decodeIfPresent([RoomAnalysis].self, forKey: .analyses) ?? []
+        learned = try c.decodeIfPresent([LearnedRoutine].self, forKey: .learned) ?? []
+    }
+
+    /// Remembers the AI-planned tasks as routines for the offline planner.
+    /// The same routine (room type, goal, title) only raises its counter.
+    public mutating func learn(from newTasks: [HouseholdTask], roomName: String, now: Date = Date()) {
+        let kind = RoomKind.infer(roomName)
+        for task in newTasks where task.source == .ai && !task.steps.isEmpty {
+            let key = LocalPlanner.normalize(task.title)
+            if let index = learned.firstIndex(where: { $0.kind == kind && $0.goal == task.goal && LocalPlanner.normalize($0.title) == key }) {
+                learned[index].seen += 1
+                learned[index].lastSeen = now
+            } else {
+                learned.append(LearnedRoutine(id: UUID(), title: task.title, kind: kind, goal: task.goal,
+                                              minutes: task.estimatedMinutes, energy: task.energy,
+                                              steps: task.steps.map { LearnedStep(text: $0.text, hint: $0.hint) },
+                                              seen: 1, lastSeen: now))
+            }
+        }
+        if learned.count > 150 {
+            learned.sort { ($0.seen, $0.lastSeen) > ($1.seen, $1.lastSeen) }
+            learned = Array(learned.prefix(150))
+        }
     }
 
     /// Name of the automatic photo point that collects a room's overview photos.
@@ -255,6 +379,20 @@ public struct HouseholdState: Codable, Equatable {
 
     public func latestAnalysis(_ roomID: UUID) -> RoomAnalysis? {
         analyses.filter { $0.roomID == roomID }.max { $0.createdAt < $1.createdAt }
+    }
+
+    /// Latest look by the AI at the room's photos (offline plans carry no photos and don't count).
+    public func latestAIAnalysis(_ roomID: UUID) -> RoomAnalysis? {
+        analyses.filter { $0.roomID == roomID && !$0.photoIDs.isEmpty }.max { $0.createdAt < $1.createdAt }
+    }
+
+    /// The photos the AI is shown for a room: the six newest.
+    public func photosForAnalysis(_ roomID: UUID) -> [RoomPhoto] { Array(roomPhotos(roomID).suffix(6)) }
+
+    /// True when the latest AI analysis was made from exactly the photos that would be sent now.
+    public func isAnalysisCurrent(_ roomID: UUID) -> Bool {
+        guard let analysis = latestAIAnalysis(roomID) else { return false }
+        return Set(analysis.photoIDs) == Set(photosForAnalysis(roomID).map(\.id))
     }
 
     public var currentTask: HouseholdTask? {

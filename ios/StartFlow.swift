@@ -62,6 +62,8 @@ struct StartFlowView: View {
     @State private var goal: Goal = .order
     @State private var minutes = 20
     @State private var energy: Energy = .normal
+    @State private var observed: Set<Clutter> = []
+    @State private var showObserved = false
     @State private var photosFor: Room?
     @State private var preview: PlanPreview?
     @State private var working = false
@@ -71,8 +73,20 @@ struct StartFlowView: View {
 
     private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
     private var orderedSelection: [UUID] { model.state.rooms.map(\.id).filter { selectedRooms.contains($0) } }
+    private var aiReady: Bool { hasKey || auth.isConnected }
+    /// Without the AI nobody needs photos, so they are only asked for when the AI can use them.
     private var roomsWithoutPhotos: [Room] {
-        model.state.rooms.filter { selectedRooms.contains($0.id) && model.state.roomPhotos($0.id).isEmpty }
+        guard aiReady else { return [] }
+        return model.state.rooms.filter { selectedRooms.contains($0.id) && model.state.roomPhotos($0.id).isEmpty }
+    }
+    private var roomsBeingAnalyzed: [Room] {
+        model.state.rooms.filter { room in
+            guard selectedRooms.contains(room.id) else { return false }
+            switch model.analysisStatus[room.id] {
+            case .queued, .running: return true
+            default: return false
+            }
+        }
     }
     private var sessionRunning: Bool {
         if let status = model.state.session?.status { return status != .finished }
@@ -179,14 +193,39 @@ struct StartFlowView: View {
                     }
                 }
 
-                if !hasKey {
+                DisclosureGroup(isExpanded: $showObserved) {
+                    Text(aiReady
+                         ? "Optional. Falls die KI mal nicht erreichbar ist, plant die App mit dem, was du hier ankreuzt."
+                         : "Ohne KI plant die App aus eingebauten Routinen. Kreuze an, was bei dir rumliegt, dann passt der Plan besser.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8)], alignment: .leading, spacing: 8) {
+                        ForEach(Clutter.allCases) { item in
+                            Button { if observed.contains(item) { observed.remove(item) } else { observed.insert(item) } } label: {
+                                Text(item.label).font(.footnote).multilineTextAlignment(.center).frame(maxWidth: .infinity, minHeight: 36)
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(observed.contains(item) ? Color.accentColor : Color.secondary)
+                            .accessibilityAddTraits(observed.contains(item) ? .isSelected : [])
+                        }
+                    }
+                } label: {
+                    Text(observed.isEmpty ? "Was liegt bei dir rum? (optional)" : "Was liegt bei dir rum? · \(observed.count) gewählt")
+                        .font(.title3.bold())
+                }
+
+                if !aiReady {
                     Card {
-                        Label("KI noch nicht verbunden", systemImage: "person.crop.circle.badge.questionmark").font(.headline)
-                        Text("Verbinde einmalig dein ChatGPT-Konto. Danach wertet die KI deine Fotos mit deinem ChatGPT-Abo aus.")
+                        Label("KI nicht verbunden", systemImage: "person.crop.circle.badge.questionmark").font(.headline)
+                        Text("Du kannst trotzdem planen: Die App nutzt dann eingebaute und früher gelernte Routinen. Mit der KI wird der Plan genauer, weil sie deine Fotos auswertet.")
                             .foregroundStyle(.secondary)
                         NavigationLink { AISettingsView() } label: { Label("Mit ChatGPT verbinden", systemImage: "arrow.right") }
                             .buttonStyle(.bordered)
                     }
+                }
+
+                if !roomsBeingAnalyzed.isEmpty {
+                    Label("Die KI wertet noch \(roomsBeingAnalyzed.map(\.name).joined(separator: ", ")) aus. Gleich geht es weiter.",
+                          systemImage: "hourglass").font(.callout).foregroundStyle(.secondary)
                 }
 
                 if let errorText {
@@ -194,8 +233,10 @@ struct StartFlowView: View {
                 }
 
                 BigButton("Plan erstellen", systemImage: "wand.and.stars") { Task { await plan() } }
-                    .disabled(selectedRooms.isEmpty || !roomsWithoutPhotos.isEmpty || !(hasKey || auth.isConnected) || sessionRunning)
-                Text("Die Fotos der gewählten Räume werden zur Auswertung an OpenAI geschickt (über dein ChatGPT-Konto). Gespeichert wird erst, wenn du den Plan startest.")
+                    .disabled(selectedRooms.isEmpty || !roomsWithoutPhotos.isEmpty || !roomsBeingAnalyzed.isEmpty || sessionRunning)
+                Text(aiReady
+                     ? "Die KI plant mit den Fotos deiner Räume (über dein ChatGPT-Konto). Ist sie nicht erreichbar oder dein Kontingent aufgebraucht, bekommst du automatisch einen Plan aus Routinen. Gespeichert wird erst, wenn du den Plan startest."
+                     : "Gespeichert wird erst, wenn du den Plan startest.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             .padding()
@@ -213,7 +254,7 @@ struct StartFlowView: View {
         errorText = nil
         working = true
         defer { working = false }
-        do { preview = try await model.makePlan(roomIDs: orderedSelection, goal: goal, minutes: minutes, energy: energy) }
+        do { preview = try await model.makePlan(roomIDs: orderedSelection, goal: goal, minutes: minutes, energy: energy, observed: observed) }
         catch { errorText = error.localizedDescription }
     }
 
@@ -238,6 +279,17 @@ private struct PlanPreviewView: View {
                 ForEach(plan.rooms) { part in
                     Card {
                         Text(part.roomName).font(.title3.bold())
+                        if let reason = part.offlineReason {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Label("Ohne KI geplant", systemImage: "wand.and.stars.inverse").font(.subheadline.bold())
+                                Text(reason).font(.caption)
+                                Text("Der Plan kommt aus eingebauten und früher gelernten Routinen – deine Fotos wurden nicht ausgewertet. Sobald die KI wieder verfügbar ist, kannst du neu planen.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
                         Text(part.analysis.summary)
                         if !part.analysis.startHint.isEmpty {
                             Label("Starte hier: \(part.analysis.startHint)", systemImage: "mappin.and.ellipse")

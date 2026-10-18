@@ -79,23 +79,57 @@ final class AppModel: ObservableObject {
 
     @Published var planningStatus: String?
 
-    /// Asks the AI about each selected room in turn. Nothing is stored here;
-    /// the user sees the preview first and starts it explicitly.
-    func makePlan(roomIDs: [UUID], goal: Goal, minutes: Int, energy: Energy) async throws -> PlanPreview {
+    /// Builds the plan for each selected room. Order of preference per room:
+    /// 1. AI from the saved analysis (text only, fast) when the photos haven't changed,
+    /// 2. AI looking at the photos,
+    /// 3. the offline planner (built-in and learned routines) – used when the AI is not
+    ///    connected, has no photos to look at, or fails (limit reached, no network, …).
+    /// Nothing is stored here; the user sees the preview first and starts it explicitly.
+    func makePlan(roomIDs: [UUID], goal: Goal, minutes: Int, energy: Energy,
+                  observed: Set<Clutter> = []) async throws -> PlanPreview {
         defer { planningStatus = nil }
         let share = max(5, minutes / max(1, roomIDs.count))
         var parts: [RoomPlanPreview] = []
         for (index, id) in roomIDs.enumerated() {
             guard let room = state.rooms.first(where: { $0.id == id }) else { continue }
-            planningStatus = roomIDs.count > 1
-                ? "Die KI schaut sich \(room.name) an … (\(index + 1) von \(roomIDs.count))"
-                : "Die KI schaut sich \(room.name) an …"
-            let photos = Array(state.roomPhotos(id).suffix(6))
-            let known = state.places.filter { $0.roomID == id }.map { state.path(for: $0.id) }
-            let answer = try await AIService.analyze(roomName: room.name, photos: photos.map(\.jpegData), knownPlaces: known,
-                                                     goal: goal, minutes: share, energy: energy)
-            let (analysis, tasks) = answer.records(roomID: id, photoIDs: photos.map(\.id), goal: goal, minutes: share)
-            parts.append(RoomPlanPreview(roomID: id, roomName: room.name, analysis: analysis, tasks: tasks))
+            let suffix = roomIDs.count > 1 ? " (\(index + 1) von \(roomIDs.count))" : ""
+            var offlineReason: String?
+            var result: (RoomAnalysis, [HouseholdTask])?
+
+            if !AIAccess.isReady {
+                offlineReason = "Die KI ist nicht verbunden."
+            } else {
+                let photos = state.photosForAnalysis(id)
+                let known = state.places.filter { $0.roomID == id }.map { state.path(for: $0.id) }
+                do {
+                    if state.isAnalysisCurrent(id), let saved = state.latestAIAnalysis(id) {
+                        planningStatus = "Die KI plant \(room.name) …\(suffix)"
+                        let answer = try await AIService.analyze(roomName: room.name, photos: [], knownPlaces: known,
+                                                                 goal: goal, minutes: share, energy: energy, analysis: saved)
+                        result = answer.records(roomID: id, photoIDs: saved.photoIDs, goal: goal, minutes: share)
+                    } else if photos.isEmpty {
+                        offlineReason = "Für diesen Raum gibt es noch keine Fotos."
+                    } else {
+                        planningStatus = "Die KI schaut sich \(room.name) an …\(suffix)"
+                        let answer = try await AIService.analyze(roomName: room.name, photos: photos.map(\.jpegData), knownPlaces: known,
+                                                                 goal: goal, minutes: share, energy: energy)
+                        result = answer.records(roomID: id, photoIDs: photos.map(\.id), goal: goal, minutes: share)
+                    }
+                } catch {
+                    offlineReason = error.localizedDescription
+                }
+            }
+
+            if let result, !result.1.isEmpty {
+                parts.append(RoomPlanPreview(roomID: id, roomName: room.name, analysis: result.0, tasks: result.1, offlineReason: nil))
+            } else {
+                if result != nil && offlineReason == nil { offlineReason = "Die KI hat keine passenden Handgriffe vorgeschlagen." }
+                planningStatus = "Plan aus Routinen für \(room.name) …\(suffix)"
+                let outcome = LocalPlanner.plan(roomID: id, roomName: room.name, goal: goal, minutes: share, energy: energy,
+                                                observed: observed, learned: state.learned, previous: state.latestAIAnalysis(id))
+                parts.append(RoomPlanPreview(roomID: id, roomName: room.name, analysis: outcome.analysis, tasks: outcome.tasks,
+                                             offlineReason: offlineReason ?? "Aus eingebauten Routinen."))
+            }
         }
         return PlanPreview(rooms: parts, goal: goal, minutes: minutes, energy: energy)
     }
@@ -105,11 +139,83 @@ final class AppModel: ObservableObject {
                                    goal: plan.goal, minutes: plan.minutes, energy: plan.energy) }
     }
 
-    /// Room overview without starting a session: what is there, where are the problems.
-    func lookAtRoom(_ roomID: UUID) async throws {
-        let plan = try await makePlan(roomIDs: [roomID], goal: .order, minutes: 20, energy: .normal)
-        guard let part = plan.rooms.first else { return }
-        try run { try $0.addAnalysis(part.analysis) }
+    // MARK: Background analysis of room photos
+
+    enum AnalysisStatus: Equatable {
+        case queued, running
+        case failed(String)
+    }
+
+    @Published private(set) var analysisStatus: [UUID: AnalysisStatus] = [:]
+    /// Rooms finished / total in the current batch; nil when idle.
+    @Published private(set) var analysisProgress: (done: Int, total: Int)?
+    private var analysisQueue: [UUID] = []
+    private var analysisWorker: Task<Void, Never>?
+    private var backgroundTask = UIBackgroundTaskIdentifier.invalid
+
+    var isAnalyzing: Bool { analysisProgress != nil }
+
+    /// Rooms with photos the AI has not looked at in their current form.
+    var roomsNeedingAnalysis: [Room] {
+        state.rooms.filter { room in
+            guard !state.roomPhotos(room.id).isEmpty, !state.isAnalysisCurrent(room.id) else { return false }
+            switch analysisStatus[room.id] {
+            case .queued, .running: return false
+            default: return true
+            }
+        }
+    }
+
+    /// Queues rooms for the AI to look at. Keeps running when the user leaves the
+    /// screen; the result is saved and feeds the offline planner later.
+    func analyzeRooms(_ ids: [UUID]) {
+        let fresh = ids.filter { id in
+            guard let status = analysisStatus[id] else { return true }
+            if case .failed = status { return true }
+            return false
+        }
+        guard !fresh.isEmpty else { return }
+        for id in fresh { analysisStatus[id] = .queued }
+        analysisQueue.append(contentsOf: fresh)
+        analysisProgress = (analysisProgress?.done ?? 0, (analysisProgress?.total ?? 0) + fresh.count)
+        guard analysisWorker == nil else { return }
+        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "KI-Auswertung") { [weak self] in
+            Task { @MainActor in self?.endBackgroundTask() }
+        }
+        analysisWorker = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while let id = self.analysisQueue.first {
+                self.analysisQueue.removeFirst()
+                await self.analyzeOne(id)
+                if let progress = self.analysisProgress { self.analysisProgress = (progress.done + 1, progress.total) }
+            }
+            self.analysisProgress = nil
+            self.analysisWorker = nil
+            self.endBackgroundTask()
+        }
+    }
+
+    private func endBackgroundTask() {
+        guard backgroundTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(backgroundTask)
+        backgroundTask = .invalid
+    }
+
+    private func analyzeOne(_ id: UUID) async {
+        guard let room = state.rooms.first(where: { $0.id == id }) else { analysisStatus[id] = nil; return }
+        analysisStatus[id] = .running
+        let photos = state.photosForAnalysis(id)
+        guard !photos.isEmpty else { analysisStatus[id] = .failed("Für diesen Raum gibt es noch keine Fotos."); return }
+        do {
+            let known = state.places.filter { $0.roomID == id }.map { state.path(for: $0.id) }
+            let answer = try await AIService.analyze(roomName: room.name, photos: photos.map(\.jpegData), knownPlaces: known,
+                                                     goal: .order, minutes: 20, energy: .normal)
+            let (analysis, tasks) = answer.records(roomID: id, photoIDs: photos.map(\.id), goal: .order, minutes: 20)
+            try run { try $0.recordAnalysis(analysis, learningFrom: tasks) }
+            analysisStatus[id] = nil
+        } catch {
+            analysisStatus[id] = .failed(error.localizedDescription)
+        }
     }
 
     func restore(_ bytes: Data) -> Bool {
@@ -129,6 +235,8 @@ struct RoomPlanPreview: Identifiable {
     let roomName: String
     let analysis: RoomAnalysis
     let tasks: [HouseholdTask]
+    /// Set when this room's plan was built without the AI; says why.
+    let offlineReason: String?
 }
 
 struct PlanPreview {
