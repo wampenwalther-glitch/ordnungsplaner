@@ -18,6 +18,14 @@ Auf Franz' Wunsch nach dem ersten Gerätetest umgebaut. **Auf dem Gerät noch ni
 
 Franz hat getestet: KI-Plan über ChatGPT-Abo läuft, Abhaken und Timer funktionieren („richtig gut“). Neu seit dem KI-Ablauf: Handgriffe in der Aufgabe antippen = abhaken, beliebige Reihenfolge (`setStepDone`); Rundenuhr mit Countdown, Pause, +5 Min., Tempo-Hinweis, einstellbare Mitteilungen (`ios/TimerAlerts.swift`, Einstellungen → Timer und Hinweise). Letzter grüner Stand: Commit d23d4c0, CI-Lauf 39082841806. Ton im gesperrten Zustand: Franz hat es geprüft, Fokus/Stumm-Einstellungen können es beeinflussen.
 
+### NEU 18.10.2026 (Claude): Aufräumen, Tests für KI-Logik, Wochenerinnerung, iPad-Breite (CI grün, Lauf 39092416214; am Gerät noch NICHT geprüft)
+**Erledigt damit die Bitten 1, 2, 3 (KI-Teil) und 5 (Teil) unten.**
+- README komplett neu (heutiger Stand). Entfernt: `PhotoPointView`, `PhotoComparison`, `NewPhotoPointForm`, `AppModel.savePhoto`.
+- `Sources/OrderCore/AIParsing.swift`: Antwort-Parser (`AIRoomPlan.parse/records`, `AIInventory.parse/record`), `AIStreamReader` (SSE), `AIResponseText` (Fehlertexte) aus `AIService` in den Kern verschoben; `AIParsingTests.swift` (Budget-Kürzung, Muster-Filter, Stream-Abbruch/Fehler, Fehlertext je Fall, keine Rohcodes).
+- Wöchentliche Erinnerung (`TimerAlerts.refreshWeekly`, Einstellungen → Timer und Hinweise).
+- iPad: Inhaltsbreite max. 720 pt, Timer-Schrift skaliert; Hinweis beim Start, wenn Foto-Dateien fehlen.
+- Weiter offen für Codex: UI-/Snapshot-Tests, VoiceOver-Durchgang am Gerät, `TimerAlerts`-Planung testbar machen (Logik in den Kern), Dunkelmodus-Sichtprüfung, Entscheidung zu Entwicklerkonto/TestFlight (Franz).
+
 ### NEU 18.10.2026 (Claude): Fotos als eigene Dateien, Löschen nach Auswertung, Vergleich (CI grün, Lauf 39091759533; am Gerät noch NICHT geprüft)
 Franz: App soll mit vielen Fotos nicht langsam werden / Speicher sparen; nach dem Aufräumen neue Fotos zum Abgleichen. **Erledigt damit Bitte 4 unten („getrennte Bilddateien“).**
 - `StateStorage` hat jetzt Blob-Methoden; `FileStateStorage` legt Fotos unter `Application Support/Ordnungsplaner/photos/<id>.jpg` ab, `household.json` enthält nur Metadaten. Reihenfolge beim Speichern: Foto-Dateien → Hauptdatei → gelöschte Dateien entfernen. Alte Dateien (Bytes inline) werden beim nächsten Speichern umgezogen; fehlende Foto-Datei blockiert das Laden nicht (`lostPhotoCount`). Export/Backup bleibt mit eingebetteten Fotos (Restore schreibt wieder Dateien).
