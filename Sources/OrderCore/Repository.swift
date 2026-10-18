@@ -4,14 +4,24 @@ extension Optional where Wrapped == String {
     var nilIfEmpty: String? { flatMap { $0.isEmpty ? nil : $0 } }
 }
 
+/// Where the household data lives. The main file holds everything except the
+/// photo bytes; each photo is its own "blob", so a small change never rewrites
+/// megabytes of images.
 public protocol StateStorage {
     func load() throws -> Data?
     func save(_ data: Data) throws
+    func saveBlob(_ data: Data, id: UUID) throws
+    /// nil when no such blob exists.
+    func loadBlob(id: UUID) throws -> Data?
+    func deleteBlob(id: UUID)
 }
 
 public struct FileStateStorage: StateStorage {
     public let fileURL: URL
     public init(fileURL: URL) { self.fileURL = fileURL }
+    private var photoDirectory: URL { fileURL.deletingLastPathComponent().appendingPathComponent("photos", isDirectory: true) }
+    private func blobURL(_ id: UUID) -> URL { photoDirectory.appendingPathComponent(id.uuidString + ".jpg") }
+
     public func load() throws -> Data? {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
         return try Data(contentsOf: fileURL)
@@ -19,6 +29,17 @@ public struct FileStateStorage: StateStorage {
     public func save(_ data: Data) throws {
         try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try data.write(to: fileURL, options: .atomic)
+    }
+    public func saveBlob(_ data: Data, id: UUID) throws {
+        try FileManager.default.createDirectory(at: photoDirectory, withIntermediateDirectories: true)
+        try data.write(to: blobURL(id), options: .atomic)
+    }
+    public func loadBlob(id: UUID) throws -> Data? {
+        guard FileManager.default.fileExists(atPath: blobURL(id).path) else { return nil }
+        return try Data(contentsOf: blobURL(id))
+    }
+    public func deleteBlob(id: UUID) {
+        try? FileManager.default.removeItem(at: blobURL(id))
     }
 }
 
@@ -28,41 +49,82 @@ public struct FileStateStorage: StateStorage {
 public final class HouseholdRepository {
     public private(set) var state: HouseholdState
     private let storage: StateStorage
+    /// Photos whose bytes are already stored as blobs. Photos read from an old
+    /// file (bytes inside the main file) are not in here and get moved on the next save.
+    private var storedPhotos: Set<UUID> = []
+    /// Photos the main file still lists but whose file is gone (cannot be restored).
+    public private(set) var lostPhotoCount = 0
 
     public init(storage: StateStorage) throws {
         self.storage = storage
         if let bytes = try storage.load() {
-            state = try Self.decode(bytes)
+            let raw = try Self.decodeRaw(bytes)
+            var photos: [RoomPhoto] = []
+            for photo in raw.photos {
+                if !photo.jpegData.isEmpty {
+                    photos.append(photo)            // old format: bytes inline
+                } else if let blob = try storage.loadBlob(id: photo.id), !blob.isEmpty {
+                    photos.append(RoomPhoto(id: photo.id, pointID: photo.pointID, createdAt: photo.createdAt, jpegData: blob))
+                    storedPhotos.insert(photo.id)
+                } else {
+                    lostPhotoCount += 1
+                }
+            }
+            var loaded = raw
+            loaded.photos = photos
+            try Self.validate(loaded)
+            state = loaded
         } else {
             state = HouseholdState()
         }
     }
 
-    public static func decode(_ data: Data) throws -> HouseholdState {
+    private static func decodeRaw(_ data: Data) throws -> HouseholdState {
         struct Envelope: Decodable { let schemaVersion: Int }
         let envelope = try JSONDecoder().decode(Envelope.self, from: data)
         guard envelope.schemaVersion == HouseholdState.currentSchema else {
             throw OrderError.invalid("Diese Datenversion wird noch nicht unterstützt. Die vorhandenen Daten wurden nicht verändert.")
         }
-        let state = try JSONDecoder().decode(HouseholdState.self, from: data)
+        return try JSONDecoder().decode(HouseholdState.self, from: data)
+    }
+
+    /// Writes new photo files first, then the main file, then removes files of deleted photos.
+    private func persist(_ candidate: HouseholdState) throws {
+        let present = Set(candidate.photos.map(\.id))
+        let added = candidate.photos.filter { !storedPhotos.contains($0.id) }
+        for photo in added { try storage.saveBlob(photo.jpegData, id: photo.id) }
+        try storage.save(try Self.encode(candidate, stripPhotos: true))
+        let removed = storedPhotos.subtracting(present)
+        for id in removed { storage.deleteBlob(id: id) }
+        storedPhotos.formUnion(added.map(\.id))
+        storedPhotos.subtract(removed)
+    }
+
+    /// Reads a backup (photos inside) and checks it.
+    public static func decode(_ data: Data) throws -> HouseholdState {
+        let state = try decodeRaw(data)
         try validate(state)
         return state
     }
 
-    public func exportData() throws -> Data { try Self.encode(state) }
+    /// Backup: one self-contained file with the photos inside.
+    public func exportData() throws -> Data { try Self.encode(state, stripPhotos: false) }
 
     public func replace(with data: Data) throws {
         var restored = try Self.decode(data)
         restored.undoRecord = nil
-        let bytes = try Self.encode(restored)
-        try storage.save(bytes)
+        try persist(restored)
         state = restored
     }
 
-    private static func encode(_ state: HouseholdState) throws -> Data {
+    private static func encode(_ state: HouseholdState, stripPhotos: Bool) throws -> Data {
+        var copy = state
+        if stripPhotos {
+            copy.photos = copy.photos.map { RoomPhoto(id: $0.id, pointID: $0.pointID, createdAt: $0.createdAt, jpegData: Data()) }
+        }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return try encoder.encode(state)
+        return try encoder.encode(copy)
     }
 
     private func transaction(keepingUndo: Bool = false, _ change: (inout HouseholdState) throws -> Void) throws {
@@ -70,9 +132,17 @@ public final class HouseholdRepository {
         if !keepingUndo { candidate.undoRecord = nil }
         try change(&candidate)
         try Self.validate(candidate)
-        let bytes = try Self.encode(candidate)
-        try storage.save(bytes)
+        try persist(candidate)
         state = candidate
+    }
+
+    /// Deletes photos (their files too). The AI's findings stay; only the pictures go.
+    public func deletePhotos(ids: [UUID]) throws {
+        let doomed = Set(ids)
+        guard !doomed.isEmpty else { return }
+        try transaction { state in
+            state.photos.removeAll { doomed.contains($0.id) }
+        }
     }
 
     public func addRoom(name: String) throws {

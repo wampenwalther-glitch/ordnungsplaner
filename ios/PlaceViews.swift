@@ -36,6 +36,7 @@ struct PlaceDetailView: View {
     @State private var newItem = ""
     @State private var newCount = ""
     @State private var message: String?
+    @State private var confirmingDelete = false
 
     var body: some View {
         if let place = model.state.places.first(where: { $0.id == placeID }) {
@@ -63,6 +64,22 @@ struct PlaceDetailView: View {
                 Card {
                     Text("Inhalt fotografieren").font(.title3.bold())
                     RoomPhotosSection(placeID: placeID)
+                    let old = model.state.outdatedPlacePhotos(placeID)
+                    if !old.isEmpty {
+                        Divider()
+                        Text("Die KI hat \(old.count == 1 ? "dieses Foto" : "diese \(old.count) Fotos") schon erfasst. Die Liste bleibt gespeichert – die Bilder brauchst du nur noch zum Ansehen.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Button("Erfasste Fotos löschen (\(RoomDetailView.megabytes(old)))", systemImage: "trash") { confirmingDelete = true }
+                            .buttonStyle(.bordered)
+                    }
+                }
+                .confirmationDialog("Erfasste Fotos löschen?", isPresented: $confirmingDelete, titleVisibility: .visible) {
+                    Button("Fotos löschen", role: .destructive) {
+                        model.perform { try $0.deletePhotos(ids: $0.state.outdatedPlacePhotos(placeID).map(\.id)) }
+                    }
+                    Button("Abbrechen", role: .cancel) {}
+                } message: {
+                    Text("Die Liste der Gegenstände bleibt erhalten. Nur die Bilder werden gelöscht.")
                 }
 
                 Card {

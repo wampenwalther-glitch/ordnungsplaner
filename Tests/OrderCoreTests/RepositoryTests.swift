@@ -3,12 +3,19 @@ import XCTest
 
 final class MemoryStorage: StateStorage {
     var data: Data?
+    var blobs: [UUID: Data] = [:]
     var failWrites = false
     func load() throws -> Data? { data }
     func save(_ data: Data) throws {
         if failWrites { throw OrderError.invalid("Datenträger nicht verfügbar") }
         self.data = data
     }
+    func saveBlob(_ data: Data, id: UUID) throws {
+        if failWrites { throw OrderError.invalid("Datenträger nicht verfügbar") }
+        blobs[id] = data
+    }
+    func loadBlob(id: UUID) throws -> Data? { blobs[id] }
+    func deleteBlob(id: UUID) { blobs[id] = nil }
 }
 
 final class RepositoryTests: XCTestCase {

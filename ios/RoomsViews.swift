@@ -76,11 +76,11 @@ private struct RoomCard: View {
         case .failed:
             Label("Auswertung fehlgeschlagen", systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
         case nil:
-            if photos.isEmpty {
-                Text("Fotos fehlen").font(.caption).foregroundStyle(Color.orange)
-            } else if let analysis = model.state.latestAIAnalysis(room.id), model.state.isAnalysisCurrent(room.id) {
+            if let analysis = model.state.latestAIAnalysis(room.id), model.state.isAnalysisCurrent(room.id) {
                 Label("Von der KI ausgewertet · \(analysis.createdAt.formatted(.relative(presentation: .named)))",
                       systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(Color.accentColor)
+            } else if photos.isEmpty {
+                Text("Fotos fehlen").font(.caption).foregroundStyle(Color.orange)
             } else {
                 Text("\(photos.count) Fotos · noch nicht ausgewertet").font(.caption).foregroundStyle(.secondary)
             }
@@ -257,8 +257,14 @@ struct RoomDetailView: View {
     @State private var showingScan = false
     @State private var lookError: String?
     @State private var adoptedMessage: String?
+    @State private var confirmingDelete = false
     @ObservedObject private var auth = ChatGPTAuth.shared
     private let lidar = RoomCaptureSession.isSupported
+
+    static func megabytes(_ photos: [RoomPhoto]) -> String {
+        let bytes = photos.reduce(0) { $0 + $1.jpegData.count }
+        return String(format: "%.1f MB", Double(bytes) / 1_000_000)
+    }
 
     var body: some View {
         let places = model.state.places.filter { $0.roomID == roomID }
@@ -269,6 +275,48 @@ struct RoomDetailView: View {
                 Card {
                     Text("Fotos").font(.title3.bold())
                     RoomPhotosSection(roomID: roomID)
+                    let old = model.state.outdatedRoomPhotos(roomID)
+                    if !old.isEmpty {
+                        Divider()
+                        Text("Die KI hat \(old.count == 1 ? "dieses Foto" : "diese \(old.count) Fotos") schon ausgewertet. Was sie gesehen hat, bleibt gespeichert – die Bilder brauchst du nur noch zum Ansehen.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Button("Ausgewertete Fotos löschen (\(Self.megabytes(old)))", systemImage: "trash") {
+                            confirmingDelete = true
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                    Text("Nach dem Aufräumen: neue Fotos machen und auswerten lassen. Dann zeigt die App unten, was sich verändert hat.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                .confirmationDialog("Ausgewertete Fotos löschen?", isPresented: $confirmingDelete, titleVisibility: .visible) {
+                    Button("Fotos löschen", role: .destructive) {
+                        model.perform { try $0.deletePhotos(ids: $0.state.outdatedRoomPhotos(roomID).map(\.id)) }
+                    }
+                    Button("Abbrechen", role: .cancel) {}
+                } message: {
+                    Text("Die Auswertung der KI bleibt erhalten. Nur die Bilder werden gelöscht und Speicher wird frei.")
+                }
+
+                if let progress = model.state.progress(roomID) {
+                    Card {
+                        Text("Seit dem letzten Mal").font(.title3.bold())
+                        Text("Vergleich der beiden letzten Auswertungen (\(progress.before.formatted(date: .abbreviated, time: .omitted)) → \(progress.after.formatted(date: .abbreviated, time: .omitted))).")
+                            .font(.caption).foregroundStyle(.secondary)
+                        if !progress.notSeenAnymore.isEmpty {
+                            Label("Nicht mehr zu sehen: " + progress.notSeenAnymore.map(\.label).joined(separator: ", "),
+                                  systemImage: "checkmark.circle.fill").foregroundStyle(Color.accentColor)
+                        }
+                        if !progress.stillSeen.isEmpty {
+                            Label("Noch zu sehen: " + progress.stillSeen.map(\.label).joined(separator: ", "),
+                                  systemImage: "circle.dashed")
+                        }
+                        if !progress.newlySeen.isEmpty {
+                            Label("Neu dazugekommen: " + progress.newlySeen.map(\.label).joined(separator: ", "),
+                                  systemImage: "plus.circle").foregroundStyle(.orange)
+                        }
+                        Text("Das ist, was die KI auf den Fotos erkannt hat – kein Beweis, dass etwas wirklich erledigt ist.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
 
                 Card {

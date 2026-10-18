@@ -5,6 +5,8 @@ struct SettingsView: View {
     @AppStorage("appearance") private var appearance = Appearance.system.rawValue
     @EnvironmentObject private var model: AppModel
     @ObservedObject private var auth = ChatGPTAuth.shared
+    @AppStorage(AppModel.autoDeleteKey) private var autoDelete = false
+    @State private var confirmingCleanup = false
     @State private var hasKey = AIKeyStore.hasKey
 
     private var aiStatus: String {
@@ -29,6 +31,20 @@ struct SettingsView: View {
             Section("Zeit") {
                 NavigationLink { TimerSettingsView() } label: { Label("Timer und Hinweise", systemImage: "bell") }
             }
+            Section {
+                LabeledContent("Fotos", value: "\(model.state.photos.count) · \(String(format: "%.1f MB", Double(model.state.photoBytes) / 1_000_000))")
+                let old = model.state.allOutdatedPhotos
+                if !old.isEmpty {
+                    Button("Ausgewertete Fotos löschen (\(old.count) · \(RoomDetailView.megabytes(old)))", systemImage: "trash") {
+                        confirmingCleanup = true
+                    }
+                }
+                Toggle("Fotos nach der Auswertung automatisch löschen", isOn: $autoDelete)
+            } header: {
+                Text("Speicher")
+            } footer: {
+                Text("Die KI merkt sich, was sie auf den Fotos gesehen hat. Die Bilder selbst kannst du danach löschen, ohne dass das Wissen verloren geht. Ist die automatische Option an, löscht die App Fotos direkt nach der Auswertung.")
+            }
             Section("Daten") {
                 NavigationLink { DataSettingsView() } label: { Label("Sicherung und Wiederherstellung", systemImage: "externaldrive") }
             }
@@ -40,6 +56,12 @@ struct SettingsView: View {
         }
         .navigationTitle("Einstellungen")
         .onAppear { hasKey = AIKeyStore.hasKey }
+        .confirmationDialog("Ausgewertete Fotos löschen?", isPresented: $confirmingCleanup, titleVisibility: .visible) {
+            Button("Fotos löschen", role: .destructive) { model.deleteAnalyzedPhotos() }
+            Button("Abbrechen", role: .cancel) {}
+        } message: {
+            Text("Räume und Lagerorte behalten ihre Auswertung. Nur die Bilder werden gelöscht.")
+        }
     }
 }
 

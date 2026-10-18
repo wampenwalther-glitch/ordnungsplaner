@@ -83,6 +83,21 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: Storage
+
+    static let autoDeleteKey = "autoDeleteAnalyzedPhotos"
+
+    /// Removes the photos the AI has already looked at; what it found stays.
+    @discardableResult
+    func deleteAnalyzedPhotos() -> Bool {
+        perform { try $0.deletePhotos(ids: $0.state.allOutdatedPhotos.map(\.id)) }
+    }
+
+    /// Frees space right after an analysis when the user asked for it.
+    private func autoCleanIfWanted() {
+        if UserDefaults.standard.bool(forKey: Self.autoDeleteKey) { deleteAnalyzedPhotos() }
+    }
+
     // MARK: Stock-taking of storage places
 
     @Published private(set) var inventoryStatus: [UUID: AnalysisStatus] = [:]
@@ -109,6 +124,7 @@ final class AppModel: ObservableObject {
                                                            photos: photos.map(\.jpegData), mode: mode)
                 try run { try $0.recordInventory(answer.record(placeID: placeID, photoIDs: photos.map(\.id))) }
                 inventoryStatus[placeID] = nil
+                autoCleanIfWanted()
             } catch {
                 inventoryStatus[placeID] = .failed(error.localizedDescription)
             }
@@ -253,6 +269,7 @@ final class AppModel: ObservableObject {
             let (analysis, tasks) = answer.records(roomID: id, photoIDs: photos.map(\.id), goal: .order, minutes: 20)
             try run { try $0.recordAnalysis(analysis, learningFrom: tasks) }
             analysisStatus[id] = nil
+            autoCleanIfWanted()
         } catch {
             analysisStatus[id] = .failed(error.localizedDescription)
         }

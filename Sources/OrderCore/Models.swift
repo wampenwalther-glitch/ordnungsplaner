@@ -454,10 +454,56 @@ public struct HouseholdState: Codable, Equatable {
     /// The photos the AI is shown for a room: the six newest.
     public func photosForAnalysis(_ roomID: UUID) -> [RoomPhoto] { Array(roomPhotos(roomID).suffix(6)) }
 
-    /// True when the latest AI analysis was made from exactly the photos that would be sent now.
+    /// True when the latest AI analysis already covers the room's photos: no photo was
+    /// taken after it. Deleting old photos keeps it current – the knowledge stays.
     public func isAnalysisCurrent(_ roomID: UUID) -> Bool {
         guard let analysis = latestAIAnalysis(roomID) else { return false }
-        return Set(analysis.photoIDs) == Set(photosForAnalysis(roomID).map(\.id))
+        return roomPhotos(roomID).allSatisfy { $0.createdAt <= analysis.createdAt }
+    }
+
+    /// Room photos the AI has already looked at (taken before its latest analysis).
+    /// Safe to delete: the analysis keeps what was seen.
+    public func outdatedRoomPhotos(_ roomID: UUID) -> [RoomPhoto] {
+        guard let analysis = latestAIAnalysis(roomID) else { return [] }
+        return roomPhotos(roomID).filter { $0.createdAt <= analysis.createdAt }
+    }
+
+    /// Photos of a storage place's contents that an AI stock-taking has already covered.
+    public func outdatedPlacePhotos(_ placeID: UUID) -> [RoomPhoto] {
+        guard let inventory = latestInventory(placeID), !inventory.photoIDs.isEmpty else { return [] }
+        return placePhotos(placeID).filter { $0.createdAt <= inventory.createdAt }
+    }
+
+    /// Everything that can go without losing what the AI found.
+    public var allOutdatedPhotos: [RoomPhoto] {
+        rooms.flatMap { outdatedRoomPhotos($0.id) } + places.flatMap { outdatedPlacePhotos($0.id) }
+    }
+
+    public var photoBytes: Int { photos.reduce(0) { $0 + $1.jpegData.count } }
+
+    /// What changed between the last two AI looks at a room. Only what the AI
+    /// reported as kinds of clutter; "not seen any more" is not proof that it is done.
+    public struct RoomProgress: Equatable {
+        public let notSeenAnymore: [Clutter]
+        public let stillSeen: [Clutter]
+        public let newlySeen: [Clutter]
+        public let before: Date
+        public let after: Date
+    }
+
+    public func progress(_ roomID: UUID) -> RoomProgress? {
+        let list = analyses.filter { $0.roomID == roomID && !$0.photoIDs.isEmpty }.sorted { $0.createdAt < $1.createdAt }
+        guard list.count >= 2 else { return nil }
+        func clutter(_ analysis: RoomAnalysis) -> Set<Clutter> {
+            Set((analysis.tags ?? []).compactMap(Clutter.init(rawValue:)))
+                .union(LocalPlanner.inferTags(from: analysis.problemZones))
+        }
+        let before = list[list.count - 2], after = list[list.count - 1]
+        let old = clutter(before), new = clutter(after)
+        func ordered(_ set: Set<Clutter>) -> [Clutter] { Clutter.allCases.filter { set.contains($0) } }
+        guard !old.isEmpty || !new.isEmpty else { return nil }
+        return RoomProgress(notSeenAnymore: ordered(old.subtracting(new)), stillSeen: ordered(old.intersection(new)),
+                            newlySeen: ordered(new.subtracting(old)), before: before.createdAt, after: after.createdAt)
     }
 
     public var currentTask: HouseholdTask? {
