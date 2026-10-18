@@ -168,7 +168,7 @@ public final class HouseholdRepository {
             }
             let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !clean.isEmpty else { throw OrderError.invalid("Bitte gib einen Namen für den Gegenstand ein.") }
-            let item = PlaceInventoryItem(name: clean, count: count?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty, source: "manual")
+            let item = PlaceInventoryItem(name: clean, count: (count?.trimmingCharacters(in: .whitespacesAndNewlines)).nilIfEmpty, source: "manual")
             let mine = state.inventories.enumerated().filter { $0.element.placeID == placeID }
             if let latest = mine.max(by: { $0.element.createdAt < $1.element.createdAt }) {
                 state.inventories[latest.offset].items.append(item)
