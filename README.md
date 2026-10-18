@@ -1,74 +1,55 @@
-# Ordnungsplaner – erster nativer Prototyp
+# Ordnungsplaner
 
-SwiftUI-App für iPhone/iPad ab iOS 17, mit unabhängigem Foundation-Datenkern. Keine externen Swift-Paketabhängigkeiten. Claude lieferte die optionale RoomPlan-Komponente; Codex prüfte und korrigierte sie und implementierte den lokalen Kern und die Oberfläche.
+SwiftUI-App für iPhone und iPad (ab iOS 17), die beim Aufräumen sagt, **was als Nächstes zu tun ist**: Räume fotografieren, Ziel/Zeit/Energie wählen, einen Plan mit einzelnen Handgriffen bekommen und abhaken. Läuft lokal auf dem Gerät, die KI-Auswertung geht über das ChatGPT-Abo des Nutzers. Foundation-Datenkern (`OrderCore`) und Oberfläche (`ios/`) sind getrennt; keine externen Swift-Pakete.
 
-**Prüfstatus:** Die zwölf Foundation-XCTest-Fälle, XcodeGen und der unsignierte iOS-Simulator-Build sind auf GitHubs macOS-Runner bestanden. [Erfolgreicher Build des Quellstands d32f1c0](https://github.com/wampenwalther-glitch/ordnungsplaner/actions/runs/39046163359). Ein Simulator-Starttest mit Screenshot und die Erstellung einer unsignierten IPA sind im nächsten Workflow ergänzt. Echte Kamera-/LiDAR-Gerätetests und Signierung stehen weiterhin aus. Aktueller belegter Stand: STATUS.md.
+Aktueller belegter Stand, offene Punkte und Übergaben: [STATUS.md](STATUS.md). Die OpenAI-Anbindung ist in [docs/OPENAI_ANBINDUNG.md](docs/OPENAI_ANBINDUNG.md) beschrieben.
 
-## Enthalten
+## Was die App kann
 
-- Räume anlegen, Lagerorte verschachteln, Kisten mit eindeutiger Kennung führen.
-- Standort einer Kiste innerhalb desselben Raums ausdrücklich bestätigen; Kreisverweise werden beim Schreiben verhindert.
-- Aufgaben selbst eingeben, in Handgriffe zerlegen, Zeit, Energie, Modus und optionalen gemeinsamen Zielort festlegen.
-- Bis zu drei vorhandene Aufgaben nach Ziel, Zeit und Energie auswählen; keine erfundene KI-Analyse.
-- Ein Handgriff nach dem anderen; erwartete Schritt-ID schützt vor doppelter Bestätigung.
-- Erledigung und Session-Zustand gemeinsam atomar in einer lokalen JSON-Datei speichern, danach erst den UI-Zustand aktualisieren.
-- Pause/Resume und Neustart erhalten den nächsten Schritt. Letzte Erledigung kann auch nach Neustart zurückgenommen werden, solange keine andere Datenänderung den Rücknahmestand verworfen hat.
-- Fotopunkte mit Standbeschreibung, Kameraaufnahme oder ausgewähltem Foto; Normalisierung der Bildausrichtung und Verkleinerung.
-- Datierten Vergleich des ersten und neuesten Fotos am selben Punkt anzeigen.
-- Optionale RoomPlan-/LiDAR-Erfassung mit Geräteprüfung. Scan-Ergebnis erst nach Bestätigung und erfolgreicher Speicherung übernehmen. Ohne LiDAR sind Fotos der primäre Weg.
-- Vollständige JSON-Sicherung inklusive Bilder und Scans; Wiederherstellung mit Vorschau und zusätzlicher lokaler Vorab-Sicherung.
-- Bei beschädigter Datei oder unbekannter Datenversion bleibt der vorhandene Stand unverändert. Keine automatische leere Neuinitialisierung.
+- **Aufräumen starten:** Räume (einzeln oder alle), Ziel (Dauerhafte Ordnung, Besuch, Umzug, Grundreinigung), Zeit und Energie wählen → Plan als Vorschau → „Los geht's“.
+- **Fotos pro Raum** (Kamera oder Mediathek, empfohlen vier). Die KI erkennt Möbel/Behälter und Arten von Unordnung, die Auswertung läuft im Hintergrund und wird gespeichert.
+- **Lagerorte und Kisten:** aus der Auswertung übernehmen oder selbst anlegen; pro Lagerort in den Inhalt fotografieren und eine **Bestandsaufnahme** machen (nur erfassen oder mit Aufräumtipps), Einträge korrigieren, selbst ergänzen. „Finden“ durchsucht Lagerorte und Gegenstände.
+- **Runde mit Timer:** ein Handgriff nach dem anderen, Pause, +5 Minuten, Tempo-Hinweis, einstellbare Mitteilungen (Hälfte, 10/5/2/1 Minuten, Ende). Handgriffe lassen sich in der Aufgabe auch in beliebiger Reihenfolge abhaken.
+- **Nie ohne Plan:** ist die KI nicht verbunden, das Kontingent leer oder das Netz weg, plant die App selbst aus ca. 60 eingebauten Routinen (Raumtyp × Ziel × Energie × Zeit) und aus Routinen, die die KI früher vorgeschlagen hat. Der Plan trägt den Hinweis „Ohne KI geplant“.
+- **Vorher/Nachher:** „Seit dem letzten Mal“ vergleicht die beiden letzten KI-Auswertungen eines Raums. Ausgewertete Fotos lassen sich löschen (das Wissen bleibt), optional automatisch.
+- **Einstellungen:** Hell/Dunkel, KI-Zugang („Mit ChatGPT verbinden“, eigener API-Schlüssel nur als Rückfall), Timer-Hinweise, wöchentliche Erinnerung, Speicher, Sicherung/Wiederherstellung.
+- **Optional LiDAR-Raumscan** (RoomPlan) auf Geräten, die ihn können; auf allen anderen läuft alles über Fotos.
 
-## Noch offen
+## Grundregeln
 
-KI-Backend und Fotoanalyse, transparente Live-Kameraüberlagerung, genaue Wiedererkennung der Fotoposition, Routinen/Benachrichtigungen, Kisteninhalt/Gegenstandsinventar, freies Ändern/Löschen, Umzug zwischen Räumen oder Wohnungen, Synchronisation zwischen Geräten, Veröffentlichung und Mehrbenutzerfreigabe. Zeit-/Energiefilter verwenden derzeit manuell erfasste ganze Aufgaben, keinen KI-Plan. Zielmodus verändert daher die Auswahl vorhandener Aufgaben, nicht automatisch deren Handgriffe.
+- Beobachtung der KI, geplanter Zielort und bestätigter Fundort sind getrennte Dinge. Die KI schreibt auf, was sie sieht; sie bestimmt nie Entsorgung, freien Platz oder Bestand.
+- Fotos und Wohnungsdaten bleiben auf dem Gerät. Nur beim Auswerten gehen die gewählten Fotos an OpenAI (über das ChatGPT-Konto des Nutzers).
+- Keine Schlüssel im Code. ChatGPT-Anmeldung und optionaler API-Schlüssel liegen im iOS-Schlüsselbund. Keine echten Fotos oder Nutzerdaten in Git oder Tests.
 
-## Auf einem Mac starten
+## Aufbau
 
-Voraussetzungen: ein zur macOS-Version passendes Xcode mit iOS-17-oder-neuer-SDK und XcodeGen. Der Homebrew-Befehl installiert nur den Projektgenerator:
+| Ort | Inhalt |
+| --- | --- |
+| `Sources/OrderCore/` | Modelle, atomares Speichern (Hauptdatei + eine Datei je Foto), Planer (`LocalPlanner`), Regeln, Lernspeicher |
+| `Tests/OrderCoreTests/` | XCTest für Kern, Speicherung, Planer, Inventar |
+| `ios/` | SwiftUI-Oberfläche, KI-Anbindung (`AIService`, `ChatGPTAuth`), Timer-Mitteilungen, RoomPlan-Komponente |
+| `project.yml` | XcodeGen-Projekt (Bundle-ID, Info.plist, Asset-Katalog mit Icon und Akzentfarbe) |
+| `.github/workflows/ios.yml` | macOS-Build: Tests, Simulator-Build und -Start, unsignierte IPA als Artefakt |
+
+Daten auf dem Gerät: `Application Support/Ordnungsplaner/household.json` (Schema-Version 1, nur Metadaten) und `photos/<id>.jpg` (ein Foto je Datei). Die Sicherung (Export) ist eine einzelne JSON-Datei mit eingebetteten Fotos. Ältere Dateien mit eingebetteten Fotos werden beim nächsten Speichern automatisch umgezogen. Bei beschädigter Datei oder unbekannter Version wird nichts überschrieben.
+
+## Bauen und prüfen
+
+Auf einem Mac (Xcode, XcodeGen):
 
 ```sh
 brew install xcodegen
-cd /Pfad/zum/Ordnungsplaner
 swift test
 xcodegen generate
 open Ordnungsplaner.xcodeproj
 ```
 
-In Xcode das Scheme `Ordnungsplaner` und einen iPhone-Simulator wählen und starten. Für ein echtes Gerät zusätzlich unter Signing ein eigenes Team und gegebenenfalls eine eigene Bundle-ID wählen. Es sind keine Zertifikate, Team-IDs oder Signierschlüssel hinterlegt.
+Ohne Mac: Push auf GitHub startet den Workflow `Local core and iOS build`. Er läuft `swift test`, baut für den Simulator, startet die App dort und liefert unter „Artifacts“ `Ordnungsplaner-iPhone-Vorschau` (Screenshot und `Ordnungsplaner-unsigniert.ipa`).
 
-Gesamtprüfung ohne Signierung:
+## Auf das iPhone
 
-```sh
-bash scripts/check-macos.sh
-```
+Die unsignierte IPA lässt sich mit Sideloadly (kostenlose Apple-ID, 7 Tage gültig) installieren. Für dauerhafte Installation ist ein Apple-Entwicklerkonto nötig (TestFlight). Es sind keine Zertifikate, Team-IDs oder Schlüssel im Repository.
 
-GitHub Actions läuft unter `.github/workflows/ios.yml`. Nach erfolgreichem erweiterten Workflow stehen unter Artifacts ein Simulator-Screenshot und `Ordnungsplaner-unsigniert.ipa` bereit. Die IPA ist **nicht signiert** und kann nicht durch einfaches Antippen installiert werden. Sie benötigt vor der Geräteinstallation einen eingerichteten Signierungsweg, beispielsweise ein geeignetes Sideload-Werkzeug oder Xcode. Zertifikate, Apple-Zugang und Geräteeinrichtung sind nicht Teil dieses Repositorys.
+## Nicht geprüft / offen
 
-## Erster Ablauf auf dem Gerät
-
-1. Unter Wohnung einen Raum anlegen.
-2. Darin „Regal“ und darunter eine Kiste, etwa A07 „Kabel“, anlegen.
-3. Unter Aufgaben eine Aufgabe mit drei Handgriffen anlegen, je Zeile ein Handgriff.
-4. Aufgabe starten und unter Heute den ersten Handgriff bestätigen.
-5. App vollständig beenden und erneut öffnen: der zweite Handgriff muss als Nächstes erscheinen.
-6. Letzte Erledigung rückgängig machen und erneut bestätigen. Pause wählen, wieder starten und fortsetzen.
-7. Im Raum einen Fotopunkt anlegen und zwei Aufnahmen hinzufügen; den datierten Vergleich prüfen.
-8. Auf einem Gerät mit LiDAR zusätzlich Scan öffnen, abbrechen, neu scannen und ausdrücklich übernehmen. Auf dem iPhone 11 Pro muss der Fotoablauf erhalten bleiben.
-9. Sicherung exportieren und anschließend eine Wiederherstellung prüfen. Nur selbst erzeugte Testdaten benutzen.
-
-## Datenspeicherung und Grenzen
-
-Speicherort im iOS-App-Container: `Application Support/Ordnungsplaner/household.json`. Die Datei enthält Schema-Version 1, Entitäten, Bilder als Base64, Session, Erledigungsereignisse und den letzten Rücknahmestand. Schreiben erfolgt synchron und atomar, damit keine UI-Erledigung vor ihrem Speichervorgang veröffentlicht wird. Große Bildarchive können die UI blockieren; die spätere Skalierung braucht getrennte Bilddateien und eine serialisierte Persistenzschicht. Für diesen ersten Stand werden Bilder auf maximal 1600 Pixel lange Kante und 2 MB pro Foto begrenzt. Angezeigte Fotodaten sind das Datum der Erfassung in dieser App; das ursprüngliche EXIF-Aufnahmedatum importierter Bilder wird noch nicht übernommen.
-
-Vor Wiederherstellung entsteht unter `backups/` eine lokale Kopie. JSON-Exporte enthalten private Wohnungsdaten. Es gibt keine automatische Cloud-Synchronisation und keine Foto-Uploads. Kameraerlaubnis steht in der durch XcodeGen erzeugten Info.plist. LiDAR ist keine Pflicht-Hardwareanforderung.
-
-Fehler beim Laden werden sichtbar angezeigt; es gibt absichtlich keinen automatischen Reset-Knopf. Für eine beschädigte Datei ist noch keine komfortable Reparatur-/Importoberfläche im Startfehlerbildschirm implementiert. Originaldatei sichern, bevor eine manuelle Wiederherstellung erfolgt.
-
-## Kerntests
-
-`Tests/OrderCoreTests/RepositoryTests.swift` deckt unter anderem Neustart, Pause/Resume, Undo nach Neustart, fehlgeschlagene Schreibvorgänge, Doppel-Tap, letzte Erledigung, Lagerort-Zyklen, doppelte Kistenkennungen, Auswahl nach Budget/Energie/Modus, ungültige Datenversionen und Foto-/Scan-Export ab. Alle zwölf XCTest-Fälle wurden im oben verlinkten macOS-Workflow erfolgreich ausgeführt. Reale Kamera-/LiDAR-Prüfungen werden dadurch nicht ersetzt.
-
-## Zusammenarbeit
-
-Vor Änderungen AGENTS.md und STATUS.md lesen. Keine zweite RoomPlan-Implementierung und keine parallelen Änderungen an denselben Dateien. Raumscan-Geometrie und bestätigte freie Lagerplätze bleiben getrennte Daten. Keine echten Fotos oder Nutzerdaten in Git/Testfixtures.
+Echter LiDAR-Scan auf Hardware, sehr große Foto-Mengen, Bildqualität der KI bei kleinen Gegenständen, Signierung und TestFlight, iPad-Feinschliff, Erinnerungen über die wöchentliche hinaus, Gerätesynchronisation und Mehrnutzer-Betrieb. Die Entwicklungsgeschichte steht im STATUS.

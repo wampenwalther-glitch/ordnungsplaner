@@ -168,6 +168,8 @@ struct PlaceDetailView: View {
                 }
             }
             .padding()
+            .frame(maxWidth: 720)
+            .frame(maxWidth: .infinity)
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle(place.name)

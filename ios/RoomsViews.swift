@@ -30,6 +30,8 @@ struct RoomsView: View {
                 }
             }
             .padding()
+            .frame(maxWidth: 720)
+            .frame(maxWidth: .infinity)
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Wohnung")
@@ -401,6 +403,8 @@ struct RoomDetailView: View {
                 }
             }
             .padding()
+            .frame(maxWidth: 720)
+            .frame(maxWidth: .infinity)
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle(model.state.rooms.first { $0.id == roomID }?.name ?? "Raum")

@@ -21,6 +21,10 @@ final class AppModel: ObservableObject {
         state = repository.state
         TimerAlerts.shared.install()
         TimerAlerts.shared.sync(state.session)
+        TimerAlerts.shared.refreshWeekly()
+        if repository.lostPhotoCount > 0 {
+            error = "\(repository.lostPhotoCount) Foto(s) konnten nicht mehr gefunden werden und fehlen jetzt. Alles andere ist unverändert."
+        }
     }
 
     @discardableResult
@@ -61,13 +65,6 @@ final class AppModel: ObservableObject {
             throw OrderError.invalid("Dieses Foto ist zu groß. Bitte wähle ein kleineres Bild.")
         }
         return data
-    }
-
-    func savePhoto(_ image: UIImage, pointID: UUID) {
-        do {
-            let data = try Self.normalizedJPEG(image)
-            perform { try $0.addPhoto(RoomPhoto(pointID: pointID, jpegData: data)) }
-        } catch { self.error = error.localizedDescription }
     }
 
     func addRoomPhoto(_ image: UIImage, roomID: UUID) throws {

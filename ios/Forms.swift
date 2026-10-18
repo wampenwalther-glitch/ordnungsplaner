@@ -115,33 +115,6 @@ struct MovePlaceForm: View {
     }
 }
 
-struct NewPhotoPointForm: View {
-    let roomID: UUID
-    @EnvironmentObject private var model: AppModel
-    @Environment(\.dismiss) private var dismiss
-    @State private var name = ""
-    var body: some View {
-        NavigationStack {
-            Form {
-                InlineSaveError()
-                TextField("Standpunkt und Blickrichtung", text: $name, axis: .vertical)
-                Text("Zum Beispiel: im Türrahmen auf Augenhöhe, Blick zum Fenster. Dieser Text hilft dir bei späteren Vergleichsfotos.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            .navigationTitle("Fotopunkt")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Speichern") {
-                        let point = PhotoPoint(roomID: roomID, name: name.trimmingCharacters(in: .whitespacesAndNewlines))
-                        if model.perform({ try $0.addPhotoPoint(point) }) { dismiss() }
-                    }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-            }
-        }
-    }
-}
-
 struct NewTaskForm: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss

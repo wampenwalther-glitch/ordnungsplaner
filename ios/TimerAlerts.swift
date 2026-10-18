@@ -127,6 +127,35 @@ final class TimerAlerts: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
+    // MARK: Weekly reminder
+
+    static let weeklyEnabledKey = "weeklyReminderOn"
+    static let weeklyWeekdayKey = "weeklyReminderWeekday"   // Calendar weekday: 1 = Sunday … 7 = Saturday
+    static let weeklyHourKey = "weeklyReminderHour"
+    static let weeklyMinuteKey = "weeklyReminderMinute"
+    nonisolated private static let weeklyID = "ordnungsplaner-weekly"
+
+    /// One repeating notification on the chosen weekday and time – or none when switched off.
+    func refreshWeekly() {
+        let defaults = UserDefaults.standard
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: [Self.weeklyID])
+        guard defaults.bool(forKey: Self.weeklyEnabledKey) else { return }
+        var when = DateComponents()
+        when.weekday = defaults.object(forKey: Self.weeklyWeekdayKey) as? Int ?? 1
+        when.hour = defaults.object(forKey: Self.weeklyHourKey) as? Int ?? 18
+        when.minute = defaults.object(forKey: Self.weeklyMinuteKey) as? Int ?? 0
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            guard granted else { return }
+            let content = UNMutableNotificationContent()
+            content.title = "Ordnungsplaner"
+            content.body = "Zeit für eine kleine Aufräumrunde – schon 10 Minuten bringen etwas."
+            if Self.soundEnabledNonisolated { content.sound = .default }
+            center.add(UNNotificationRequest(identifier: Self.weeklyID, content: content,
+                                             trigger: UNCalendarNotificationTrigger(dateMatching: when, repeats: true)))
+        }
+    }
+
     func authorizationStatus() async -> UNAuthorizationStatus {
         await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
     }

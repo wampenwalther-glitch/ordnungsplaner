@@ -94,6 +94,8 @@ struct TodayView: View {
                 }
             }
             .padding()
+            .frame(maxWidth: 720)
+            .frame(maxWidth: .infinity)
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Aufräumen")
@@ -202,7 +204,7 @@ private struct SessionTimerView: View {
                 HStack(alignment: .firstTextBaseline) {
                     Image(systemName: session.status == .paused ? "pause.circle" : "timer")
                     Text(clock(remaining))
-                        .font(.system(size: 34, weight: .bold, design: .rounded)).monospacedDigit()
+                        .font(.system(.largeTitle, design: .rounded).weight(.bold)).monospacedDigit()
                         .foregroundStyle(over ? Color.red : Color.primary)
                     Spacer()
                     Button("+5 Min.", systemImage: "plus") { model.perform { try $0.extendSession(minutes: 5) } }

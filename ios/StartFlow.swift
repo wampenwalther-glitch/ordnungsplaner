@@ -240,6 +240,8 @@ struct StartFlowView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             .padding()
+            .frame(maxWidth: 720)
+            .frame(maxWidth: .infinity)
         }
     }
 
@@ -322,6 +324,8 @@ private struct PlanPreviewView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             .padding()
+            .frame(maxWidth: 720)
+            .frame(maxWidth: .infinity)
         }
     }
 }

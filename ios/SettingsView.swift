@@ -73,10 +73,34 @@ struct TimerSettingsView: View {
     @AppStorage(TimerMilestone.left2.defaultsKey) private var left2 = false
     @AppStorage(TimerMilestone.left1.defaultsKey) private var left1 = false
     @AppStorage(TimerMilestone.end.defaultsKey) private var end = true
+    @AppStorage(TimerAlerts.weeklyEnabledKey) private var weekly = false
+    @AppStorage(TimerAlerts.weeklyWeekdayKey) private var weekday = 1
+    @AppStorage(TimerAlerts.weeklyHourKey) private var weeklyHour = 18
+    @AppStorage(TimerAlerts.weeklyMinuteKey) private var weeklyMinute = 0
     @State private var permission: String?
+
+    private var weeklyTime: Binding<Date> {
+        Binding(get: { Calendar.current.date(from: DateComponents(hour: weeklyHour, minute: weeklyMinute)) ?? Date() },
+                set: { let parts = Calendar.current.dateComponents([.hour, .minute], from: $0)
+                       weeklyHour = parts.hour ?? 18; weeklyMinute = parts.minute ?? 0 })
+    }
 
     var body: some View {
         Form {
+            Section {
+                Toggle("Jede Woche erinnern", isOn: $weekly)
+                if weekly {
+                    Picker("Wochentag", selection: $weekday) {
+                        Text("Montag").tag(2); Text("Dienstag").tag(3); Text("Mittwoch").tag(4); Text("Donnerstag").tag(5)
+                        Text("Freitag").tag(6); Text("Samstag").tag(7); Text("Sonntag").tag(1)
+                    }
+                    DatePicker("Uhrzeit", selection: weeklyTime, displayedComponents: .hourAndMinute)
+                }
+            } header: {
+                Text("Wöchentliche Aufräumrunde")
+            } footer: {
+                Text("Die App erinnert dich einmal pro Woche an eine kleine Runde. Tippst du die Mitteilung an, kannst du direkt unter „Aufräumen“ starten.")
+            }
             Section {
                 Text("Während einer Aufräumrunde läuft ein Timer mit deiner gewählten Zeit. Hier legst du fest, wann dich die App erinnert. Die Hinweise kommen auch, wenn das iPhone gesperrt ist.")
                     .font(.callout)
@@ -105,6 +129,10 @@ struct TimerSettingsView: View {
         .navigationTitle("Timer und Hinweise")
         .navigationBarTitleDisplayMode(.inline)
         .task { await loadPermission() }
+        .onChange(of: weekly) { _, _ in TimerAlerts.shared.refreshWeekly() }
+        .onChange(of: weekday) { _, _ in TimerAlerts.shared.refreshWeekly() }
+        .onChange(of: weeklyHour) { _, _ in TimerAlerts.shared.refreshWeekly() }
+        .onChange(of: weeklyMinute) { _, _ in TimerAlerts.shared.refreshWeekly() }
         .onChange(of: sound) { _, _ in TimerAlerts.shared.refresh() }
         .onChange(of: half) { _, _ in TimerAlerts.shared.refresh() }
         .onChange(of: left10) { _, _ in TimerAlerts.shared.refresh() }
