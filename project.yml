@@ -38,7 +38,11 @@ targets:
         CFBundleShortVersionString: "0.1.0"
         CFBundleVersion: "1"
         LSRequiresIPhoneOS: true
-        NSCameraUsageDescription: "Mit deiner Kamera dokumentierst du Räume und nimmst auf geeigneten Geräten einen LiDAR-Raumscan auf."
+        NSCameraUsageDescription: "Mit deiner Kamera dokumentierst du Räume und Lagerorte, liest QR-Etiketten und nimmst auf geeigneten Geräten einen LiDAR-Raumscan auf."
+        CFBundleURLTypes:
+          - CFBundleURLName: local.ordnungsplaner.app
+            CFBundleURLSchemes:
+              - ordnungsplaner
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         UILaunchScreen: {}

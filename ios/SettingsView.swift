@@ -6,6 +6,7 @@ struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject private var auth = ChatGPTAuth.shared
     @AppStorage(AppModel.autoDeleteKey) private var autoDelete = false
+    @AppStorage(AppModel.autoAnalyzeKey) private var autoAnalyze = true
     @State private var confirmingCleanup = false
     @State private var hasKey = AIKeyStore.hasKey
 
@@ -24,6 +25,7 @@ struct SettingsView: View {
             }
             Section("KI") {
                 NavigationLink { AISettingsView() } label: { LabeledContent("KI-Zugang", value: aiStatus) }
+                Toggle("Neue Fotos automatisch auswerten", isOn: $autoAnalyze)
                 LabeledContent("Gelernte Routinen", value: "\(model.state.learned.count)")
                 Text("Wenn die KI mal nicht erreichbar ist, plant die App aus ca. \(LocalPlanner.rules.count) eingebauten Routinen und denen, die die KI dir früher vorgeschlagen hat.")
                     .font(.caption).foregroundStyle(.secondary)

@@ -78,6 +78,35 @@ final class AppModel: ObservableObject {
         case .room(let id): try run { try $0.addRoomPhoto(roomID: id, jpegData: data) }
         case .place(let id): try run { try $0.addPlacePhoto(placeID: id, jpegData: data) }
         }
+        scheduleAutoAnalysis(target)
+    }
+
+    // MARK: Automatic analysis of new photos
+
+    static let autoAnalyzeKey = "autoAnalyzePhotos"
+    private var autoAnalysisTasks: [UUID: Task<Void, Never>] = [:]
+
+    var autoAnalyzeEnabled: Bool { UserDefaults.standard.object(forKey: Self.autoAnalyzeKey) as? Bool ?? true }
+
+    /// A few seconds after the last new photo the AI looks at it – so taking several
+    /// photos in a row leads to one analysis, not one per photo. Switchable in the settings.
+    private func scheduleAutoAnalysis(_ target: PhotoTarget) {
+        guard autoAnalyzeEnabled, AIAccess.isReady else { return }
+        let key: UUID
+        switch target {
+        case .room(let id): key = id
+        case .place(let id): key = id
+        }
+        autoAnalysisTasks[key]?.cancel()
+        autoAnalysisTasks[key] = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(15))
+            guard !Task.isCancelled, let self else { return }
+            self.autoAnalysisTasks[key] = nil
+            switch target {
+            case .room(let id): if !self.state.isAnalysisCurrent(id) { self.analyzeRooms([id]) }
+            case .place(let id): self.inventoryPlace(id, mode: .inventoryOnly)
+            }
+        }
     }
 
     // MARK: Storage
@@ -93,6 +122,21 @@ final class AppModel: ObservableObject {
     /// Frees space right after an analysis when the user asked for it.
     private func autoCleanIfWanted() {
         if UserDefaults.standard.bool(forKey: Self.autoDeleteKey) { deleteAnalyzedPhotos() }
+    }
+
+    // MARK: Opening a place from a QR code
+
+    struct OpenedPlace: Identifiable { let id: UUID }
+    /// Set when a QR code (scanned in the app or with the iPhone camera) points at one of our places.
+    @Published var openedPlace: OpenedPlace?
+
+    func handleLink(_ url: URL) {
+        guard url.scheme?.lowercased() == PlaceLink.scheme else { return }
+        if let id = PlaceLink.placeID(from: url.absoluteString), state.places.contains(where: { $0.id == id }) {
+            openedPlace = OpenedPlace(id: id)
+        } else {
+            error = "Dieser Code gehört zu keinem deiner Lagerorte – vielleicht stammt er aus einer anderen Sicherung oder der Ort wurde gelöscht."
+        }
     }
 
     // MARK: Stock-taking of storage places
@@ -340,6 +384,7 @@ struct OrdnungsplanerApp: App {
             Group {
             if let model = loader.model {
                 PlannerTabs().environmentObject(model)
+                    .onOpenURL { model.handleLink($0) }
             } else {
                 ContentUnavailableView {
                     Label("Daten konnten nicht geladen werden", systemImage: "externaldrive.badge.exclamationmark")

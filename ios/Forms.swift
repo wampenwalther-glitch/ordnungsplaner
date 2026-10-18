@@ -82,24 +82,46 @@ struct PlaceForm: View {
     }
 }
 
+/// Move a place (with everything in it) to another spot – also into another room.
+/// The target can be picked from lists or scanned from its QR label.
 struct MovePlaceForm: View {
     let place: StoragePlace
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
+    @State private var roomID: UUID
     @State private var parentID: UUID?
-    init(place: StoragePlace) { self.place = place; _parentID = State(initialValue: place.parentID) }
+    @State private var scanning = false
+    @State private var scanNote: String?
+    init(place: StoragePlace) {
+        self.place = place
+        _roomID = State(initialValue: place.roomID)
+        _parentID = State(initialValue: place.parentID)
+    }
+
+    private var inside: Set<UUID> { model.state.subtree(of: place.id) }
+
     var body: some View {
         NavigationStack {
             Form {
                 InlineSaveError()
                 Text(model.state.path(for: place.id)).font(.headline)
-                Picker("Neuer Standort", selection: $parentID) {
-                    Text("Direkt im Raum").tag(Optional<UUID>.none)
-                    ForEach(model.state.places.filter { $0.roomID == place.roomID && $0.id != place.id }) {
-                        Text(model.state.path(for: $0.id)).tag(Optional($0.id))
+                Section("Neuer Standort") {
+                    Picker("Raum", selection: $roomID) {
+                        ForEach(model.state.rooms) { Text($0.name).tag($0.id) }
                     }
+                    .onChange(of: roomID) { _, _ in
+                        if let parentID, model.state.places.first(where: { $0.id == parentID })?.roomID != roomID { self.parentID = nil }
+                    }
+                    Picker("Steht in", selection: $parentID) {
+                        Text("Direkt im Raum").tag(Optional<UUID>.none)
+                        ForEach(model.state.places.filter { $0.roomID == roomID && !inside.contains($0.id) }) {
+                            Text(model.state.path(for: $0.id)).tag(Optional($0.id))
+                        }
+                    }
+                    Button("Neuen Standort per QR-Etikett scannen", systemImage: "qrcode.viewfinder") { scanning = true }
+                    if let scanNote { Text(scanNote).font(.caption).foregroundStyle(.orange) }
                 }
-                Text("Bestätige erst, wenn du den Lagerort oder die Kiste tatsächlich dorthin gestellt hast. Andere Räume werden in diesem Prototyp noch nicht unterstützt.")
+                Text("Bestätige erst, wenn du den Lagerort oder die Kiste tatsächlich dorthin gestellt hast. Unterorte und der Inhalt ziehen mit um.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             .navigationTitle("Standort bestätigen")
@@ -107,8 +129,16 @@ struct MovePlaceForm: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Bestätigen") {
-                        if model.perform({ try $0.movePlace(id: place.id, parentID: parentID) }) { dismiss() }
+                        if model.perform({ try $0.movePlace(id: place.id, parentID: parentID, roomID: roomID) }) { dismiss() }
                     }
+                }
+            }
+            .sheet(isPresented: $scanning) {
+                PlaceScanSheet(prompt: "Scanne das Etikett des neuen Standorts") { target in
+                    if inside.contains(target.id) { scanNote = "Ein Ort kann nicht in sich selbst stehen."; return }
+                    roomID = target.roomID
+                    parentID = target.id
+                    scanNote = "Ziel: \(model.state.path(for: target.id))"
                 }
             }
         }

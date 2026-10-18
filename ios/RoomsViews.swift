@@ -131,6 +131,8 @@ struct RoomPhotosSection: View {
     @State private var loading = false
     @State private var errorText: String?
     @State private var viewing: RoomPhoto?
+    @AppStorage(AppModel.autoAnalyzeKey) private var autoAnalyze = true
+    @ObservedObject private var auth = ChatGPTAuth.shared
     private let columns = [GridItem(.adaptive(minimum: 96), spacing: 8)]
 
     var body: some View {
@@ -175,6 +177,10 @@ struct RoomPhotosSection: View {
             .buttonStyle(.bordered)
             .disabled(loading)
             if loading { ProgressView("Fotos werden vorbereitet …") }
+            if autoAnalyze && (AIAccess.isReady || auth.isConnected) {
+                Label("Die KI wertet neue Fotos automatisch aus, kurz nachdem du fertig bist.", systemImage: "eye")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             if let errorText { Label(errorText, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
         }
         .onChange(of: picked) { _, items in

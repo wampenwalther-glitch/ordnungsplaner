@@ -8,10 +8,17 @@ struct PlannerTabs: View {
             NavigationStack { TodayView() }.tabItem { Label("Aufräumen", systemImage: "sparkles") }
             NavigationStack { RoomsView() }.tabItem { Label("Wohnung", systemImage: "house") }
             NavigationStack { TasksView() }.tabItem { Label("Aufgaben", systemImage: "checklist") }
-            NavigationStack { FindView() }.tabItem { Label("Finden", systemImage: "magnifyingglass") }
+            NavigationStack { FindView() }.tabItem { Label("Wo ist was?", systemImage: "magnifyingglass") }
             NavigationStack { SettingsView() }.tabItem { Label("Einstellungen", systemImage: "gearshape") }
         }
         .tint(.accentColor)
+        .sheet(item: $model.openedPlace) { opened in
+            NavigationStack {
+                PlaceDetailView(placeID: opened.id)
+                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Schließen") { model.openedPlace = nil } } }
+            }
+            .environmentObject(model)
+        }
         .alert("Nicht gespeichert", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
             Button("OK") { model.error = nil }
         } message: { Text(model.error ?? "") }
@@ -360,12 +367,38 @@ private struct StepRow: View {
     }
 }
 
+/// "Wo ist was?": search places and items, filter by moving status, scan labels, move things around.
 struct FindView: View {
     @EnvironmentObject private var model: AppModel
     @State private var query = ""
+    @State private var statusFilter: PlaceStatus?
+    @State private var scanning = false
+    @State private var moving = false
+    @State private var printing = false
+
+    private var filteredPlaces: [StoragePlace] {
+        model.state.places.filter { place in
+            (statusFilter == nil || place.status == statusFilter)
+                && (query.isEmpty || model.state.path(for: place.id).localizedCaseInsensitiveContains(query))
+        }
+    }
+
     var body: some View {
-        let hits = model.state.searchInventory(query)
+        let hits = statusFilter == nil ? model.state.searchInventory(query) : []
         List {
+            if !model.state.places.isEmpty {
+                Section {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            chip("Alle", symbol: "square.grid.2x2", selected: statusFilter == nil) { statusFilter = nil }
+                            ForEach(PlaceStatus.allCases) { status in
+                                let count = model.state.places(with: status).count
+                                chip("\(status.label) (\(count))", symbol: status.symbol, selected: statusFilter == status) { statusFilter = status }
+                            }
+                        }
+                    }
+                } header: { Text("Umzugsstatus") }
+            }
             if !hits.isEmpty {
                 Section("Gegenstände") {
                     ForEach(hits) { hit in
@@ -380,20 +413,46 @@ struct FindView: View {
                 }
             }
             Section(hits.isEmpty ? "" : "Lagerorte") {
-                ForEach(model.state.places.filter {
-                    query.isEmpty || model.state.path(for: $0.id).localizedCaseInsensitiveContains(query)
-                }) { place in
+                ForEach(filteredPlaces) { place in
                     NavigationLink { PlaceDetailView(placeID: place.id) } label: { PlaceRow(place: place) }
                 }
             }
             if model.state.places.isEmpty {
                 ContentUnavailableView("Noch keine Lagerorte", systemImage: "archivebox",
-                    description: Text("Lass die KI einen Raum ansehen und übernimm die erkannten Regale, Schränke und Kisten. Dann kannst du hineinfotografieren und den Inhalt erfassen."))
-            } else if !query.isEmpty && hits.isEmpty && model.state.places.allSatisfy({ !model.state.path(for: $0.id).localizedCaseInsensitiveContains(query) }) {
-                Text("Nichts gefunden. Gesucht wird in Lagerorten und in den erfassten Gegenständen.").foregroundStyle(.secondary)
+                    description: Text("Lass die KI einen Raum ansehen und übernimm die erkannten Regale, Schränke und Kisten. Dann kannst du hineinfotografieren, Etiketten drucken und per Scan umräumen."))
+            } else if filteredPlaces.isEmpty && hits.isEmpty {
+                Text(statusFilter == nil ? "Nichts gefunden. Gesucht wird in Lagerorten und in den erfassten Gegenständen."
+                                         : "Kein Ort hat diesen Status.").foregroundStyle(.secondary)
             }
         }
-        .navigationTitle("Finden")
+        .navigationTitle("Wo ist was?")
         .searchable(text: $query, prompt: "Gegenstand, Kiste, Regal …")
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Menu {
+                    Button("Etiketten aller Lagerorte", systemImage: "printer") { printing = true }
+                        .disabled(model.state.places.isEmpty)
+                    Button("Umräumen per Scan", systemImage: "arrow.left.arrow.right") { moving = true }
+                        .disabled(model.state.places.isEmpty)
+                } label: { Label("Mehr", systemImage: "ellipsis.circle") }
+                Button("QR-Etikett scannen", systemImage: "qrcode.viewfinder") { scanning = true }
+                    .disabled(model.state.places.isEmpty)
+            }
+        }
+        .sheet(isPresented: $scanning) {
+            PlaceScanSheet(prompt: "Scanne das Etikett einer Kiste oder eines Regals") { place in
+                model.openedPlace = AppModel.OpenedPlace(id: place.id)
+            }
+        }
+        .sheet(isPresented: $moving) { MoveByScanSheet() }
+        .sheet(isPresented: $printing) { LabelSheet(placeIDs: model.state.places.map(\.id)) }
+    }
+
+    private func chip(_ title: String, symbol: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) { Label(title, systemImage: symbol).font(.footnote) }
+            .buttonStyle(.bordered)
+            .tint(selected ? Color.accentColor : Color.secondary)
+            .fontWeight(selected ? .bold : .regular)
+            .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }

@@ -17,6 +17,9 @@ struct PlaceRow: View {
                 Text(model.state.path(for: place.id)).multilineTextAlignment(.leading)
                 Text(unknown ? "Inhalt noch nicht erfasst" : "\(photos) \(photoWord) · \(items) \(itemWord)")
                     .font(.caption).foregroundStyle(unknown ? Color.orange : Color.secondary)
+                if let status = place.status {
+                    Label(status.label, systemImage: status.symbol).font(.caption.bold()).foregroundStyle(Color.accentColor)
+                }
             }
             Spacer(minLength: 0)
             Image(systemName: "chevron.right").font(.footnote).foregroundStyle(.tertiary)
@@ -37,6 +40,15 @@ struct PlaceDetailView: View {
     @State private var newCount = ""
     @State private var message: String?
     @State private var confirmingDelete = false
+    @State private var confirmingEmpty = false
+    @State private var labeling = false
+    @State private var movingItem: MovingItem?
+
+    struct MovingItem: Identifiable {
+        let id = UUID()
+        let inventoryID: UUID
+        let item: PlaceInventoryItem
+    }
 
     var body: some View {
         if let place = model.state.places.first(where: { $0.id == placeID }) {
@@ -57,8 +69,33 @@ struct PlaceDetailView: View {
                 Card {
                     Label(model.state.path(for: placeID), systemImage: place.kind == .box ? "shippingbox" : "archivebox")
                         .font(.headline)
-                    Button("Standort ändern", systemImage: "arrow.up.and.down.and.arrow.left.and.right") { moving = place }
+                    if let code = place.code { Text("Code: \(code)").font(.subheadline.monospaced()).foregroundStyle(.secondary) }
+                    if let added = inventory?.items.compactMap(\.addedAt).max() {
+                        Text("Zuletzt hinzugefügt: \(added.formatted(.relative(presentation: .named)))").font(.caption).foregroundStyle(.secondary)
+                    }
+                    Menu {
+                        Button("Kein Status", systemImage: "xmark") { model.perform { try $0.setPlaceStatus(id: placeID, status: nil) } }
+                        ForEach(PlaceStatus.allCases) { item in
+                            Button(item.label, systemImage: item.symbol) { model.perform { try $0.setPlaceStatus(id: placeID, status: item) } }
+                        }
+                    } label: {
+                        Label(place.status?.label ?? "Status für den Umzug wählen", systemImage: place.status?.symbol ?? "tag")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    HStack {
+                        Button("Standort ändern", systemImage: "arrow.up.and.down.and.arrow.left.and.right") { moving = place }
+                        Button("Etikett", systemImage: "qrcode") { labeling = true }
+                    }
+                    .buttonStyle(.bordered)
+                    Button("Als leer markieren", systemImage: "tray") { confirmingEmpty = true }
                         .buttonStyle(.bordered)
+                }
+                .confirmationDialog("Als leer markieren?", isPresented: $confirmingEmpty, titleVisibility: .visible) {
+                    Button("Ja, ist leer") { model.perform { try $0.markPlaceEmpty(placeID: placeID) } }
+                    Button("Abbrechen", role: .cancel) {}
+                } message: {
+                    Text("Die Gegenstandsliste dieses Ortes wird geleert. Frühere Listen bleiben als Verlauf erhalten.")
                 }
 
                 Card {
@@ -129,6 +166,11 @@ struct PlaceDetailView: View {
                                     if let note = item.note { Text(note).font(.caption).foregroundStyle(.secondary) }
                                 }
                                 Spacer(minLength: 0)
+                                Button { movingItem = MovingItem(inventoryID: inventory.id, item: item) } label: {
+                                    Image(systemName: "arrow.right.circle").foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("\(item.name) verschieben")
                                 Button {
                                     model.perform { try $0.removeInventoryItem(inventoryID: inventory.id, itemID: item.id) }
                                 } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
@@ -175,10 +217,116 @@ struct PlaceDetailView: View {
         .navigationTitle(place.name)
         .navigationBarTitleDisplayMode(.inline)
         .sheet(item: $moving) { MovePlaceForm(place: $0) }
+        .sheet(isPresented: $labeling) { LabelSheet(placeIDs: [placeID]) }
+        .sheet(item: $movingItem) { moving in
+            PlacePickerSheet(title: "Wohin mit „\(moving.item.name)“?", excluding: placeID) { target in
+                model.perform { try $0.moveInventoryItem(inventoryID: moving.inventoryID, itemID: moving.item.id, toPlace: target) }
+            }
+        }
     }
 
     private func addItem() {
         let ok = model.perform { try $0.addInventoryItem(placeID: placeID, name: newItem, count: newCount) }
         if ok { newItem = ""; newCount = ""; message = nil }
+    }
+}
+
+/// Choose a place from the list (searchable) or by scanning its label.
+struct PlacePickerSheet: View {
+    let title: String
+    let excluding: UUID?
+    let onPick: (UUID) -> Void
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var query = ""
+    @State private var scanning = false
+
+    private var places: [StoragePlace] {
+        model.state.places.filter { $0.id != excluding }
+            .filter { query.isEmpty || model.state.path(for: $0.id).localizedCaseInsensitiveContains(query) }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Button("Etikett des Ziels scannen", systemImage: "qrcode.viewfinder") { scanning = true }
+                }
+                Section("Lagerorte") {
+                    ForEach(places) { place in
+                        Button { onPick(place.id); dismiss() } label: { PlaceRow(place: place) }.buttonStyle(.plain)
+                    }
+                    if places.isEmpty { Text("Keine passenden Lagerorte.").foregroundStyle(.secondary) }
+                }
+            }
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $query, prompt: "Ziel suchen")
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { dismiss() } } }
+            .sheet(isPresented: $scanning) {
+                PlaceScanSheet(prompt: "Scanne das Etikett des Ziels") { target in
+                    if target.id != excluding { onPick(target.id); dismiss() }
+                }
+            }
+        }
+    }
+}
+
+/// "Umräumen": scan what you moved, then scan where it stands now.
+struct MoveByScanSheet: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var moved: StoragePlace?
+    @State private var done: String?
+    @State private var note: String?
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 14) {
+                if let moved {
+                    Card {
+                        Label("Du verschiebst", systemImage: "shippingbox").font(.subheadline).foregroundStyle(.secondary)
+                        Text(model.state.path(for: moved.id)).font(.headline)
+                        Button("Anderen Ort wählen", systemImage: "arrow.uturn.backward") { self.moved = nil; note = nil }
+                            .buttonStyle(.bordered)
+                    }
+                    ScanPanel(prompt: "Scanne jetzt den neuen Standort") { text in
+                        guard let target = model.state.place(forScan: text) else {
+                            note = "Dieser Code gehört zu keinem deiner Lagerorte."; return
+                        }
+                        if model.state.subtree(of: moved.id).contains(target.id) {
+                            note = "Ein Ort kann nicht in sich selbst stehen."; return
+                        }
+                        if model.perform({ try $0.movePlace(id: moved.id, parentID: target.id, roomID: target.roomID) }) {
+                            done = "„\(moved.name)“ steht jetzt in \(model.state.path(for: target.id))."
+                            self.moved = nil; note = nil
+                        }
+                    }
+                    Menu {
+                        ForEach(model.state.rooms) { room in
+                            Button(room.name) {
+                                if model.perform({ try $0.movePlace(id: moved.id, parentID: nil, roomID: room.id) }) {
+                                    done = "„\(moved.name)“ steht jetzt direkt im Raum \(room.name)."
+                                    self.moved = nil
+                                }
+                            }
+                        }
+                    } label: { Label("Direkt in einen Raum stellen …", systemImage: "house") }
+                } else {
+                    if let done { Label(done, systemImage: "checkmark.circle.fill").foregroundStyle(Color.accentColor) }
+                    ScanPanel(prompt: done == nil ? "Scanne das Etikett der Kiste oder des Ortes, den du verschiebst"
+                                                  : "Nächste Kiste scannen – oder fertig") { text in
+                        if let place = model.state.place(forScan: text) { moved = place; done = nil; note = nil }
+                        else { note = "Dieser Code gehört zu keinem deiner Lagerorte." }
+                    }
+                }
+                if let note { Label(note, systemImage: "exclamationmark.triangle").foregroundStyle(.orange) }
+                Spacer(minLength: 0)
+            }
+            .padding()
+            .navigationTitle("Umräumen per Scan")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Fertig") { dismiss() } } }
+        }
     }
 }
