@@ -14,6 +14,7 @@
 
 - Ob ein **iPhone-App-Client** über `dynamic_agent_client` registriert werden darf. Die Doku nennt nur Loopback-Clients (CLI/Desktop). Gelöst mit lokalem Empfänger auf 127.0.0.1 in der App + `ASWebAuthenticationSession`.
 - Ob `text.format = json_schema` (strukturierte Ausgabe) über diese Route erlaubt ist → Rückfall: bei `subscription_sharing_unsupported_capability` ohne Schema, mit JSON-Vorgabe im Prompt.
+- `ext_agent_host_id` muss `urn:uuid:<UUIDv4>` (oder JWK-Thumbprint-URI / did:key) sein – erster Gerätetest scheiterte an einem eigenen Format, behoben.
 - Welches Modell die Fotos am besten auswertet → Auswahl aus `GET /v1/models`, Standard = erstes gelistetes, wählbar in Einstellungen → KI.
 
 ## Umsetzung

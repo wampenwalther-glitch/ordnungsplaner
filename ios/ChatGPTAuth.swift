@@ -168,8 +168,10 @@ final class ChatGPTAuth: NSObject, ObservableObject, ASWebAuthenticationPresenta
 
     /// Stable, opaque id for this install (required by OpenAI, not a secret).
     private var hostID: String {
-        if let data = Keychain.read(Self.hostAccount), let text = String(data: data, encoding: .utf8) { return text }
-        let created = "ordnungsplaner-" + Self.randomURLSafe(24)
+        // OpenAI accepts a JWK-thumbprint URI, did:key or "urn:uuid:<UUIDv4>"; the latter is used here.
+        if let data = Keychain.read(Self.hostAccount), let text = String(data: data, encoding: .utf8),
+           text.hasPrefix("urn:uuid:"), UUID(uuidString: String(text.dropFirst(9))) != nil { return text }
+        let created = "urn:uuid:" + UUID().uuidString.lowercased()
         Keychain.write(Data(created.utf8), account: Self.hostAccount)
         return created
     }
