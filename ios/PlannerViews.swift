@@ -230,15 +230,23 @@ struct TaskDetailView: View {
     var body: some View {
         List {
             if let task = model.state.tasks.first(where: { $0.id == taskID }) {
-                Section(task.title) {
+                let open = task.steps.filter { $0.completedAt == nil }
+                let done = task.steps.filter { $0.completedAt != nil }
+                Section {
                     Text("\(task.goal.label) · ca. \(task.estimatedMinutes) Minuten · \(task.energy.label)")
                         .foregroundStyle(.secondary)
-                    ForEach(task.steps) { step in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Label(step.text, systemImage: step.completedAt == nil ? "circle" : "checkmark.circle.fill")
-                            if let hint = step.hint { Text("→ \(hint)").font(.caption).foregroundStyle(.secondary) }
-                            if let target = step.targetPlaceID { Text(model.state.path(for: target)).font(.caption) }
-                        }
+                    ProgressView(value: Double(done.count), total: Double(max(task.steps.count, 1)))
+                    Text(open.isEmpty ? "Alles geschafft!" : "Noch \(open.count) von \(task.steps.count) Handgriffen offen – tippe einen an, wenn er erledigt ist.")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+                if !open.isEmpty {
+                    Section("Noch zu tun") {
+                        ForEach(open) { step in StepRow(task: task, step: step) }
+                    }
+                }
+                if !done.isEmpty {
+                    Section("Geschafft") {
+                        ForEach(done) { step in StepRow(task: task, step: step) }
                     }
                 }
                 if !task.isComplete, model.state.session == nil || model.state.session?.status == .finished {
@@ -251,7 +259,44 @@ struct TaskDetailView: View {
                 }
             }
         }
-        .navigationTitle("Handgriffe")
+        .navigationTitle(model.state.tasks.first { $0.id == taskID }?.title ?? "Handgriffe")
+        .navigationBarTitleDisplayMode(.inline)
+        .sensoryFeedback(.success, trigger: model.state.events.count)
+    }
+}
+
+private struct StepRow: View {
+    let task: HouseholdTask
+    let step: ActionStep
+    @EnvironmentObject private var model: AppModel
+    var body: some View {
+        let isDone = step.completedAt != nil
+        Button {
+            withAnimation { _ = model.perform { try $0.setStepDone(taskID: task.id, stepID: step.id, done: !isDone) } }
+        } label: {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: isDone ? "checkmark.circle.fill" : "circle")
+                    .font(.title2)
+                    .foregroundStyle(isDone ? Color.accentColor : Color.secondary)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(step.text)
+                        .strikethrough(isDone)
+                        .foregroundStyle(isDone ? Color.secondary : Color.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let hint = step.hint { Text("→ \(hint)").font(.caption).foregroundStyle(.secondary) }
+                    if let target = step.targetPlaceID {
+                        Text(model.state.path(for: target)).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(step.text)
+        .accessibilityValue(isDone ? "erledigt" : "offen")
+        .accessibilityHint(isDone ? "Doppeltippen, um wieder auf offen zu setzen" : "Doppeltippen, um als erledigt abzuhaken")
     }
 }
 

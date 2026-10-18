@@ -256,6 +256,30 @@ public final class HouseholdRepository {
         }
     }
 
+    /// Ticks a single step off (or back on) from the task list, in any order.
+    /// Independent of a running session; a running session that has nothing
+    /// left to do is finished in the same transaction.
+    public func setStepDone(taskID: UUID, stepID: UUID, done: Bool, at date: Date = Date()) throws {
+        try transaction { state in
+            guard let taskIndex = state.tasks.firstIndex(where: { $0.id == taskID }),
+                  let stepIndex = state.tasks[taskIndex].steps.firstIndex(where: { $0.id == stepID }) else {
+                throw OrderError.invalid("Dieser Handgriff existiert nicht mehr.")
+            }
+            let isDone = state.tasks[taskIndex].steps[stepIndex].completedAt != nil
+            guard isDone != done else { return }
+            if done {
+                state.tasks[taskIndex].steps[stepIndex].completedAt = date
+                state.events.append(CompletionEvent(id: UUID(), taskID: taskID, stepID: stepID, date: date))
+            } else {
+                state.tasks[taskIndex].steps[stepIndex].completedAt = nil
+                state.events.removeAll { $0.stepID == stepID }
+            }
+            if let session = state.session, session.status != .finished, state.currentTask == nil {
+                state.session?.status = .finished
+            }
+        }
+    }
+
     public func undoCompletion() throws {
         try transaction(keepingUndo: true) { state in
             guard let undo = state.undoRecord, state.events.last?.id == undo.completionEventID,
@@ -308,11 +332,8 @@ public final class HouseholdRepository {
             try require(roomIDs.contains(task.roomID) && text(task.title), "Aufgabe benötigt Raum und Titel.")
             try require(task.estimatedMinutes > 0 && task.estimatedMinutes <= 1440 && !task.steps.isEmpty,
                         "Aufgabe benötigt eine Dauer und mindestens einen Handgriff.")
-            var foundIncomplete = false
             for step in task.steps {
                 try require(text(step.text) && allStepIDs.insert(step.id).inserted, "Handgriffe benötigen Text und eindeutige Kennungen.")
-                if step.completedAt == nil { foundIncomplete = true }
-                else { try require(!foundIncomplete, "Handgriffe müssen in ihrer Reihenfolge bestätigt werden.") }
                 if let id = step.targetPlaceID {
                     try require(state.places.contains { $0.id == id && $0.roomID == task.roomID }, "Zielort fehlt oder gehört zu einem anderen Raum.")
                 }

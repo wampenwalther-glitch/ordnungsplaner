@@ -205,4 +205,23 @@ final class RepositoryTests: XCTestCase {
         XCTAssertEqual(restarted.state.rooms.first?.name, "Bad")
         XCTAssertTrue(restarted.state.analyses.isEmpty)
     }
+
+    func testTickStepsOffInAnyOrderAndBack() throws {
+        let storage = MemoryStorage()
+        let (repository, task) = try fixture(storage)
+        try repository.setStepDone(taskID: task.id, stepID: task.steps[2].id, done: true)
+        XCTAssertEqual(repository.state.currentTask?.nextStep?.id, task.steps[0].id)
+        XCTAssertEqual(repository.state.events.count, 1)
+        try repository.setStepDone(taskID: task.id, stepID: task.steps[0].id, done: true)
+        XCTAssertEqual(repository.state.currentTask?.nextStep?.id, task.steps[1].id)
+        let restarted = try HouseholdRepository(storage: storage)
+        XCTAssertEqual(restarted.state.tasks[0].steps.filter { $0.completedAt != nil }.count, 2)
+        try restarted.setStepDone(taskID: task.id, stepID: task.steps[2].id, done: false)
+        XCTAssertEqual(restarted.state.events.count, 1)
+        try restarted.setStepDone(taskID: task.id, stepID: task.steps[1].id, done: true)
+        try restarted.setStepDone(taskID: task.id, stepID: task.steps[2].id, done: true)
+        XCTAssertTrue(restarted.state.tasks[0].isComplete)
+        XCTAssertEqual(restarted.state.session?.status, .finished)
+        XCTAssertThrowsError(try restarted.setStepDone(taskID: task.id, stepID: UUID(), done: true))
+    }
 }
