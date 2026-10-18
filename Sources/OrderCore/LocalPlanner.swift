@@ -105,7 +105,7 @@ public enum LocalPlanner {
     // MARK: Built-in routines
 
     private static func r(_ id: String, _ title: String, _ kinds: [RoomKind] = [], tag: Clutter? = nil, goals: [Goal] = [],
-                          min: Int, _ energy: Energy = .low, visible: Bool = false, deep: Bool = false,
+                          min: Int, energy: Energy = .low, visible: Bool = false, deep: Bool = false,
                           _ steps: [String]) -> CleanRule {
         CleanRule(id: id, title: title, kinds: kinds, tag: tag, goals: goals, minutes: min, energy: energy,
                   visible: visible, deep: deep, steps: steps)
@@ -122,17 +122,17 @@ public enum LocalPlanner {
         r("k-counter", "Arbeitsplatte freiräumen", [.kitchen], tag: .surfaces, min: 8, visible: true, [
             "Nimm alles von der Arbeitsplatte, was dort nicht hingehört", "Sortiere es: Küche, andere Räume, Müll",
             "Bring die Dinge an ihren Platz oder in einen Korb", "Wisch die Platte feucht ab"]),
-        r("k-fridge", "Kühlschrank durchsehen", [.kitchen], tag: .fridge, goals: [.order, .cleaning, .moving], min: 15, .normal, deep: true, [
+        r("k-fridge", "Kühlschrank durchsehen", [.kitchen], tag: .fridge, goals: [.order, .cleaning, .moving], min: 15, energy: .normal, deep: true, [
             "Nimm abgelaufene Lebensmittel heraus → Müll", "Stell Ähnliches zusammen (Milchprodukte, Reste, Getränke)",
             "Wisch die frei gewordenen Fächer aus", "Stell alles geordnet zurück"]),
         r("k-trash", "Küchenmüll rausbringen", [.kitchen], tag: .trash, min: 4, visible: true, [
             "Binde den Müllbeutel zu", "Bring ihn zur Mülltonne → Mülltonne", "Zieh einen neuen Beutel auf"]),
         r("k-sink", "Spüle sauber machen", [.kitchen], tag: .dishes, goals: [.visitors, .cleaning], min: 6, visible: true, deep: true, [
             "Räum die Spüle komplett leer", "Spül sie mit Spülmittel aus", "Trockne den Wasserhahn ab, dann glänzt er"]),
-        r("k-cupboard", "Einen Küchenschrank sortieren", [.kitchen], goals: [.order, .moving], min: 15, .normal, deep: true, [
+        r("k-cupboard", "Einen Küchenschrank sortieren", [.kitchen], goals: [.order, .moving], min: 15, energy: .normal, deep: true, [
             "Such dir einen Schrank aus und nimm alles heraus", "Sortiere aus: Doppeltes, Kaputtes, Nie Benutztes → Prüfstapel",
             "Wisch den Schrank innen aus", "Räum Gleiches zusammen zurück, das Häufigste nach vorn"]),
-        r("k-stove", "Herd und Backofen abwischen", [.kitchen], goals: [.cleaning, .visitors], min: 12, .normal, deep: true, [
+        r("k-stove", "Herd und Backofen abwischen", [.kitchen], goals: [.cleaning, .visitors], min: 12, energy: .normal, deep: true, [
             "Nimm Roste und Abdeckungen ab", "Weiche die Herdplatten mit Reiniger ein", "Wisch alles ab, dann die Roste",
             "Setz alles wieder zusammen"]),
         r("k-floor", "Küchenboden fegen", [.kitchen], tag: .floor, min: 6, visible: true, [
@@ -159,17 +159,17 @@ public enum LocalPlanner {
             "Wirf Getragene in den Wäschekorb → Wäschekorb"]),
         r("b-nightstand", "Nachttisch freiräumen", [.bedroom], tag: .surfaces, min: 5, [
             "Nimm Gläser und Geschirr mit → Küche", "Sortiere Bücher und Kabel", "Wisch die Fläche ab"]),
-        r("b-wardrobe", "Kleiderschrank aussortieren", [.bedroom], goals: [.moving, .order], min: 25, .high, deep: true, [
+        r("b-wardrobe", "Kleiderschrank aussortieren", [.bedroom], goals: [.moving, .order], min: 25, energy: .high, deep: true, [
             "Nimm alles aus einem Fach", "Sortiere in: behalten, abgeben, prüfen → Abgabe-Tasche",
             "Leg oder häng das Behaltene zurück", "Stell die Abgabe-Tasche an die Tür"]),
-        r("b-bedding", "Bettwäsche wechseln", [.bedroom], goals: [.cleaning, .visitors], min: 12, .normal, deep: true, [
+        r("b-bedding", "Bettwäsche wechseln", [.bedroom], goals: [.cleaning, .visitors], min: 12, energy: .normal, deep: true, [
             "Zieh das Bett ab → Wäschekorb", "Beziehe Matratzenschoner und Laken frisch", "Beziehe Decke und Kissen neu",
             "Starte die Maschine mit der benutzten Bettwäsche"]),
         // Wäsche (überall)
-        r("w-laundry", "Wäsche waschen starten", tag: .laundry, min: 10, .normal, [
+        r("w-laundry", "Wäsche waschen starten", tag: .laundry, min: 10, energy: .normal, [
             "Trag die Wäsche zur Waschmaschine → Waschmaschine", "Trenne Helles und Dunkles", "Starte eine Maschine",
             "Stell dir einen Wecker für das Aufhängen"]),
-        r("w-fold", "Saubere Wäsche zusammenlegen", [.bedroom, .living, .kids, .other], tag: .laundry, min: 12, .normal, [
+        r("w-fold", "Saubere Wäsche zusammenlegen", [.bedroom, .living, .kids, .other], tag: .laundry, min: 12, energy: .normal, [
             "Nimm den Wäschestapel auf Bett oder Tisch", "Leg zusammen, Gleiches auf Gleiches",
             "Bring jeden Stapel an seinen Platz → Kleiderschrank"]),
         // Bad
@@ -180,12 +180,12 @@ public enum LocalPlanner {
             "Nimm benutzte Handtücher ab → Wäschekorb", "Häng frische auf"]),
         r("ba-mirror", "Spiegel und Armatur polieren", [.bathroom], goals: [.visitors, .cleaning], min: 5, visible: true, [
             "Sprüh Glasreiniger auf den Spiegel", "Wisch ihn trocken", "Poliere die Armatur mit einem Tuch"]),
-        r("ba-toilet", "WC reinigen", [.bathroom], goals: [.visitors, .cleaning], min: 8, .normal, visible: true, [
+        r("ba-toilet", "WC reinigen", [.bathroom], goals: [.visitors, .cleaning], min: 8, energy: .normal, visible: true, [
             "Gib Reiniger unter den Rand", "Bürste das Becken", "Wisch Brille und Deckel ab", "Spül nach"]),
-        r("ba-shower", "Dusche reinigen", [.bathroom], goals: [.cleaning], min: 15, .normal, deep: true, [
+        r("ba-shower", "Dusche reinigen", [.bathroom], goals: [.cleaning], min: 15, energy: .normal, deep: true, [
             "Sprüh Reiniger an Wände und Armaturen", "Lass ihn kurz einwirken", "Schrubb Fugen und Ablauf",
             "Spül alles ab und zieh die Scheibe ab"]),
-        r("ba-cabinet", "Badschrank ausmisten", [.bathroom], goals: [.order, .moving], min: 12, .normal, deep: true, [
+        r("ba-cabinet", "Badschrank ausmisten", [.bathroom], goals: [.order, .moving], min: 12, energy: .normal, deep: true, [
             "Nimm alles aus einem Fach", "Wirf Abgelaufenes und Leeres weg → Müll", "Sortiere nach Gesicht, Körper, Medizin",
             "Räum es geordnet zurück"]),
         r("ba-floor", "Badboden wischen", [.bathroom], tag: .floor, min: 6, [
@@ -205,50 +205,50 @@ public enum LocalPlanner {
         r("h-floor", "Flur saugen und wischen", [.hallway], tag: .floor, min: 8, visible: true, [
             "Schieb Schuhe und Matte zur Seite", "Saug den Flur", "Wisch grobe Flecken weg"]),
         // Arbeitszimmer
-        r("o-desk", "Schreibtisch freiräumen", [.office], tag: .surfaces, min: 10, .normal, visible: true, [
+        r("o-desk", "Schreibtisch freiräumen", [.office], tag: .surfaces, min: 10, energy: .normal, visible: true, [
             "Nimm alles vom Schreibtisch und leg es auf den Boden oder ein Tablett", "Wisch die Fläche ab",
             "Stell nur zurück, was du täglich brauchst", "Sortiere den Rest weg → Regal oder Schublade"]),
-        r("o-drawer", "Eine Schublade ausmisten", [.office], goals: [.order, .moving], min: 12, .normal, deep: true, [
+        r("o-drawer", "Eine Schublade ausmisten", [.office], goals: [.order, .moving], min: 12, energy: .normal, deep: true, [
             "Kipp die Schublade auf den Tisch aus", "Sortiere: behalten, wegwerfen, woanders hin",
             "Räum das Behaltene in Fächern zurück"]),
-        r("o-papers", "Ablage leeren", [.office], tag: .papers, min: 15, .normal, [
+        r("o-papers", "Ablage leeren", [.office], tag: .papers, min: 15, energy: .normal, [
             "Nimm den Papierstapel und schau jedes Blatt einmal an", "Wirf Altes weg → Papiermüll",
             "Lege Wichtiges ab → Ordner", "Leg Offenes in einen Korb 'Erledigen'"]),
         r("o-screen", "Bildschirm und Tastatur reinigen", [.office], goals: [.cleaning, .visitors], min: 5, [
             "Schalte alles aus", "Wisch den Bildschirm mit einem trockenen Tuch ab", "Klopf Krümel aus der Tastatur"]),
         // Kinderzimmer
-        r("ki-toys", "Spielzeug in Kisten sortieren", [.kids], tag: .toys, min: 10, .normal, [
+        r("ki-toys", "Spielzeug in Kisten sortieren", [.kids], tag: .toys, min: 10, energy: .normal, [
             "Sammle alles auf einen Haufen", "Sortiere in Kisten: Bauen, Figuren, Bücher", "Stell die Kisten an ihren Platz",
             "Leg Kaputtes in einen Prüfkorb"]),
-        r("ki-outgrown", "Zu kleine Kleidung aussortieren", [.kids], goals: [.order, .moving], min: 15, .normal, deep: true, [
+        r("ki-outgrown", "Zu kleine Kleidung aussortieren", [.kids], goals: [.order, .moving], min: 15, energy: .normal, deep: true, [
             "Nimm ein Fach Kleidung heraus", "Leg Zu-Kleines in eine Tasche → Abgabe", "Räum Passendes zurück"]),
         // Keller / Abstellraum
-        r("s-box", "Eine Kiste sortieren", [.storage], goals: [.order, .moving], min: 20, .high, deep: true, [
+        r("s-box", "Eine Kiste sortieren", [.storage], goals: [.order, .moving], min: 20, energy: .high, deep: true, [
             "Hol eine Kiste heraus und leere sie auf den Boden", "Sortiere: behalten, abgeben, Müll",
             "Beschrifte die Kiste mit dem Inhalt", "Stell sie zurück oder pack sie für den Umzug"]),
         r("s-label", "Kisten beschriften", [.storage], goals: [.moving, .order], min: 10, [
             "Nimm einen dicken Stift und Klebeband", "Schreib Inhalt und Raum auf jede Kiste, an die Seite",
             "Stell die Beschriftung nach vorn"]),
-        r("s-floor", "Platz am Boden schaffen", [.storage], tag: .floor, min: 10, .normal, [
+        r("s-floor", "Platz am Boden schaffen", [.storage], tag: .floor, min: 10, energy: .normal, [
             "Stell lose Dinge an die Wand", "Stapel Kisten nach Größe", "Lass einen Weg zur Tür frei"]),
-        r("s-bulky", "Sperriges aussortieren", [.storage], goals: [.moving, .order], min: 20, .high, deep: true, [
+        r("s-bulky", "Sperriges aussortieren", [.storage], goals: [.moving, .order], min: 20, energy: .high, deep: true, [
             "Such Dinge, die du seit einem Jahr nicht gebraucht hast", "Mach drei Haufen: behalten, abgeben, Sperrmüll",
             "Notiere, was abgeholt werden muss"]),
         // Umzug (überall)
         r("mv-donate", "Abgabe-Kiste starten", goals: [.moving, .order], min: 10, [
             "Stell einen Karton bereit und schreib 'Abgeben' darauf", "Wirf alles hinein, was du ein Jahr nicht gebraucht hast",
             "Stell den Karton an die Tür"]),
-        r("mv-box", "Einen Bereich einpacken", goals: [.moving], min: 20, .high, deep: true, [
+        r("mv-box", "Einen Bereich einpacken", goals: [.moving], min: 20, energy: .high, deep: true, [
             "Wähle ein Regal oder einen Schrank", "Pack Gleiches zusammen in einen Karton", "Polstere Zerbrechliches mit Tüchern",
             "Beschrifte den Karton mit Raum und Inhalt"]),
-        r("mv-first", "Erste-Nacht-Kiste packen", goals: [.moving], min: 15, .normal, [
+        r("mv-first", "Erste-Nacht-Kiste packen", goals: [.moving], min: 15, energy: .normal, [
             "Stell einen Karton bereit: 'Erste Nacht'", "Leg Zahnbürste, Ladegeräte, Bettzeug und Wasserkocher hinein",
             "Stell ihn gut sichtbar an die Tür"]),
-        r("mv-docs", "Wichtige Unterlagen zusammenlegen", tag: .papers, goals: [.moving], min: 15, .normal, [
+        r("mv-docs", "Wichtige Unterlagen zusammenlegen", tag: .papers, goals: [.moving], min: 15, energy: .normal, [
             "Sammle Pässe, Verträge und Rechnungen", "Leg sie in eine feste Mappe → Dokumentenmappe",
             "Nimm die Mappe beim Umzug selbst mit"]),
         // Besuch (überall)
-        r("vi-surfaces", "Sichtbare Flächen freiräumen", tag: .surfaces, goals: [.visitors], min: 10, .normal, visible: true, [
+        r("vi-surfaces", "Sichtbare Flächen freiräumen", tag: .surfaces, goals: [.visitors], min: 10, energy: .normal, visible: true, [
             "Geh durch den Raum und nimm alles von Tischen und Ablagen", "Bring es an seinen Platz oder in einen Korb",
             "Wisch die Flächen kurz ab"]),
         r("vi-basket", "Alles Herumliegende in einen Korb", goals: [.visitors], min: 5, visible: true, [
@@ -258,20 +258,20 @@ public enum LocalPlanner {
         r("vi-trash", "Müll einsammeln", tag: .trash, goals: [.visitors, .order], min: 5, visible: true, [
             "Nimm einen Müllbeutel", "Sammle Verpackungen, Papier und Leergut ein", "Bring ihn nach draußen → Mülltonne"]),
         // Putzen (überall)
-        r("cl-windows", "Fenster putzen", goals: [.cleaning], min: 20, .high, deep: true, [
+        r("cl-windows", "Fenster putzen", goals: [.cleaning], min: 20, energy: .high, deep: true, [
             "Wisch den Rahmen und die Fensterbank ab", "Sprüh Glasreiniger auf die Scheibe",
             "Zieh die Scheibe von oben nach unten ab", "Poliere Schlieren mit einem Tuch"]),
-        r("cl-dust", "Staub wischen von oben nach unten", tag: .dust, goals: [.cleaning, .visitors, .order], min: 12, .normal, deep: true, [
+        r("cl-dust", "Staub wischen von oben nach unten", tag: .dust, goals: [.cleaning, .visitors, .order], min: 12, energy: .normal, deep: true, [
             "Nimm kleine Dinge von den Flächen", "Wisch von oben nach unten: Regale, Tische, Fensterbank",
             "Stell zurück, was du behalten willst"]),
-        r("cl-floor", "Boden saugen und wischen", tag: .floor, goals: [.cleaning, .visitors], min: 15, .normal, visible: true, deep: true, [
+        r("cl-floor", "Boden saugen und wischen", tag: .floor, goals: [.cleaning, .visitors], min: 15, energy: .normal, visible: true, deep: true, [
             "Heb lose Dinge vom Boden auf", "Saug erst den Rand, dann die Mitte", "Wisch den Boden feucht nach"]),
         r("cl-doors", "Türen und Griffe abwischen", goals: [.cleaning], min: 8, deep: true, [
             "Wisch Türklinken und Lichtschalter ab", "Wisch die Türblätter ab, wo Fingerabdrücke sind"]),
-        r("cl-curtains", "Vorhänge waschen", [.living, .bedroom, .kids], goals: [.cleaning], min: 15, .normal, deep: true, [
+        r("cl-curtains", "Vorhänge waschen", [.living, .bedroom, .kids], goals: [.cleaning], min: 15, energy: .normal, deep: true, [
             "Nimm die Vorhänge ab", "Lies das Pflegeetikett", "Wasch sie und häng sie feucht wieder auf"]),
         // Ordnung (überall)
-        r("or-hotspot", "Eine Brennpunkt-Stelle ordnen", goals: [.order], min: 10, .normal, [
+        r("or-hotspot", "Eine Brennpunkt-Stelle ordnen", goals: [.order], min: 10, energy: .normal, [
             "Such die Stelle, an der sich am meisten ansammelt", "Räum sie komplett leer und wisch sie ab",
             "Gib jedem Ding einen festen Platz", "Stell einen kleinen Korb für 'kommt später weg' dazu"]),
         r("or-five", "Fünf Dinge zurückbringen", goals: [.order, .visitors], min: 5, [
@@ -280,16 +280,16 @@ public enum LocalPlanner {
             "Heb alles vom Boden auf", "Sortiere in: weg, woanders hin, hierher", "Bring alles an seinen Platz"]),
         r("or-pets", "Haustierzeug ordnen", tag: .pets, min: 6, [
             "Sammle Näpfe, Spielzeug und Decken ein", "Wisch den Futterplatz ab", "Stell alles an seinen Platz → Tierecke"]),
-        r("or-cables", "Kabel und Ladegeräte bündeln", tag: .cables, min: 10, .normal, [
+        r("or-cables", "Kabel und Ladegeräte bündeln", tag: .cables, min: 10, energy: .normal, [
             "Sammle alle Ladegeräte und Kabel", "Sortiere: funktioniert, unbekannt, kaputt",
             "Wickle jedes Kabel auf und binde es mit einem Band", "Leg sie in eine beschriftete Kiste → Kabelkiste"]),
         r("or-bottles", "Flaschen und Pfand sammeln", tag: .bottles, min: 6, [
             "Sammle leere Flaschen und Dosen ein", "Stell sie in eine Kiste oder Tasche → Pfandkiste",
             "Stell die Kiste an die Tür, damit du sie mitnimmst"]),
-        r("or-papers", "Post und Papiere sortieren", tag: .papers, min: 10, .normal, [
+        r("or-papers", "Post und Papiere sortieren", tag: .papers, min: 10, energy: .normal, [
             "Sammle alle losen Papiere und Briefe", "Wirf Werbung und Verpackungen weg → Papiermüll",
             "Sortiere den Rest: erledigen, ablegen, wichtig", "Leg 'Erledigen' sichtbar an einen festen Platz → Ablagekorb"]),
-        r("or-drawer", "Eine Schublade sortieren", goals: [.order, .moving], min: 12, .normal, [
+        r("or-drawer", "Eine Schublade sortieren", goals: [.order, .moving], min: 12, energy: .normal, [
             "Such dir eine Schublade aus und kipp sie aus", "Sortiere: behalten, anderswo hin, weg",
             "Räum das Behaltene in Fächern zurück"]),
         r("or-timer", "Zehn Minuten Ordnung", goals: [.order], min: 10, [
