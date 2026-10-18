@@ -138,6 +138,8 @@ enum LabelRenderer {
 /// Preview, size choice, AirPrint and sharing for one place's label – or for several at once.
 struct LabelSheet: View {
     let placeIDs: [UUID]
+    /// Codes of blank labels printed in advance (no place yet).
+    var blankCodes: [String] = []
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var style: LabelStyle = .narrow
@@ -183,7 +185,13 @@ struct LabelSheet: View {
             .navigationTitle(labels.count == 1 ? "Etikett" : "Etiketten")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Fertig") { dismiss() } } }
-            .task { labels = LabelRenderer.contents(for: placeIDs, model: model); rebuild() }
+            .task {
+                labels = blankCodes.isEmpty
+                    ? LabelRenderer.contents(for: placeIDs, model: model)
+                    : blankCodes.map { LabelContent(code: $0, name: "Noch frei", path: "Scannen und zuordnen",
+                                                    link: PlaceLink.codeURL(for: $0).absoluteString) }
+                rebuild()
+            }
             .onChange(of: style) { _, _ in rebuild() }
         }
     }

@@ -120,6 +120,96 @@ final class WhereIsWhatTests: XCTestCase {
         XCTAssertThrowsError(try repository.markPlaceEmpty(placeID: UUID()))
     }
 
+    func testCodeLinksAndPlainCodesFromOtherLabelApps() {
+        XCTAssertEqual(PlaceLink.codeURL(for: "K21").absoluteString, "ordnungsplaner://code/K21")
+        XCTAssertEqual(PlaceLink.code(from: "ordnungsplaner://code/K21"), "K21")
+        XCTAssertEqual(PlaceLink.code(from: PlaceLink.codeURL(for: "Kiste 7").absoluteString), "Kiste 7")   // spaces survive
+        XCTAssertEqual(PlaceLink.code(from: "  K07 \n"), "K07")
+        XCTAssertEqual(PlaceLink.code(from: "Elektronik 3"), "Elektronik 3")
+        XCTAssertNil(PlaceLink.code(from: PlaceLink.url(for: UUID()).absoluteString))                    // a place link is no code
+        XCTAssertNil(PlaceLink.code(from: "ordnungsplaner://room/x"))
+        XCTAssertNil(PlaceLink.code(from: ""))
+        XCTAssertNil(PlaceLink.code(from: String(repeating: "x", count: 81)))
+        XCTAssertNil(PlaceLink.code(from: "zwei\nZeilen"))
+    }
+
+    func testBlankLabelBatchesNeverRepeatAndScanFindsAssignedPlace() throws {
+        let (repository, storage, room, _) = try twoRooms()
+        let used = StoragePlace(roomID: room.id, name: "Vorhanden", kind: .box, code: "K02")
+        try repository.addPlace(used)
+        let first = try repository.reserveCodes(prefix: "k", count: 3)
+        XCTAssertEqual(first, ["K01", "K03", "K04"])                              // K02 is taken
+        let second = try repository.reserveCodes(prefix: "K", count: 2)
+        XCTAssertEqual(second, ["K05", "K06"])                                      // no repeat of the first batch
+        XCTAssertThrowsError(try repository.reserveCodes(prefix: "", count: 2))
+        XCTAssertThrowsError(try repository.reserveCodes(prefix: "K", count: 0))
+        // an automatic code skips reserved ones too
+        let fresh = StoragePlace(roomID: room.id, name: "Neu", kind: .box)
+        try repository.addPlace(fresh)
+        XCTAssertEqual(try repository.ensureLabelCode(placeID: fresh.id), "K07")
+
+        // scanning a blank label: unknown until a place takes the code
+        XCTAssertNil(repository.state.place(forScan: PlaceLink.codeURL(for: "K03").absoluteString))
+        let shelf = StoragePlace(roomID: room.id, name: "Regal")
+        try repository.addPlace(shelf)
+        try repository.assignCode(placeID: shelf.id, code: " k03 ")
+        XCTAssertFalse(repository.state.reservedCodes.contains("K03"))              // reservation used up
+        XCTAssertEqual(repository.state.place(forScan: PlaceLink.codeURL(for: "K03").absoluteString)?.id, shelf.id)
+        XCTAssertEqual(repository.state.place(forScan: "K03")?.id, shelf.id)
+        XCTAssertThrowsError(try repository.assignCode(placeID: fresh.id, code: "K03"))   // taken
+        XCTAssertThrowsError(try repository.assignCode(placeID: fresh.id, code: "  "))
+        XCTAssertThrowsError(try repository.assignCode(placeID: UUID(), code: "Z1"))
+
+        // a place created straight from a scanned code also uses up its reservation
+        let box = StoragePlace(roomID: room.id, name: "Kabel", kind: .box, code: "K04")
+        try repository.addPlace(box)
+        XCTAssertEqual(repository.state.reservedCodes, ["K01", "K05", "K06"])
+        XCTAssertEqual(try HouseholdRepository(storage: storage).state.reservedCodes, ["K01", "K05", "K06"])
+    }
+
+    func testLabelSuggestionsRankClosedContainersFirstWithReasons() throws {
+        let (repository, _, room, _) = try twoRooms()
+        try repository.adoptDetectedPlaces(roomID: room.id, [
+            DetectedPlace(name: "Kabelkiste", kind: "kiste", note: ""), DetectedPlace(name: "Schrank links", kind: "schrank", note: ""),
+            DetectedPlace(name: "Offenes Regal", kind: "regal", note: ""), DetectedPlace(name: "Fensterbank", kind: "ablage", note: ""),
+            DetectedPlace(name: "Kommode", kind: "kommode", note: "")])
+        let places = repository.state.places
+        XCTAssertEqual(places.first { $0.name == "Kabelkiste" }?.form, "kiste")
+        XCTAssertEqual(places.first { $0.name == "Kabelkiste" }?.kind, .box)
+        let regal = try XCTUnwrap(places.first { $0.name == "Offenes Regal" })
+        try repository.addInventoryItem(placeID: regal.id, name: "Bücher")                    // content known → ranks higher
+        var suggestions = repository.state.labelSuggestions()
+        XCTAssertEqual(suggestions.count, 5)
+        let top = try XCTUnwrap(suggestions.first)
+        XCTAssertEqual(repository.state.places.first { $0.id == top.placeID }?.name, "Kabelkiste")
+        XCTAssertTrue(suggestions[0].recommended)
+        XCTAssertTrue(suggestions.contains { $0.reason.contains("Schrank") && $0.recommended })
+        XCTAssertTrue(suggestions.first { $0.placeID == regal.id }?.reason.contains("Inhalt schon erfasst (1)") == true)
+        let fensterbank = try XCTUnwrap(places.first { $0.name == "Fensterbank" })
+        XCTAssertEqual(suggestions.last?.placeID, fensterbank.id)                               // open surface last
+        XCTAssertFalse(suggestions.last?.recommended ?? true)
+        // labelled places drop out of the list
+        try repository.ensureLabelCode(placeID: places.first { $0.name == "Kabelkiste" }!.id)
+        suggestions = repository.state.labelSuggestions()
+        XCTAssertEqual(suggestions.count, 4)
+    }
+
+    func testOlderFilesWithoutReservedCodesOrFormStillLoad() throws {
+        let (repository, storage, room, _) = try twoRooms()
+        try repository.addPlace(StoragePlace(roomID: room.id, name: "Kiste", kind: .box, form: "kiste"))
+        try repository.reserveCodes(prefix: "K", count: 2)
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(storage.data)) as? [String: Any])
+        json.removeValue(forKey: "reservedCodes")
+        var places = try XCTUnwrap(json["places"] as? [[String: Any]])
+        places[0].removeValue(forKey: "form")
+        json["places"] = places
+        storage.data = try JSONSerialization.data(withJSONObject: json)
+        let restarted = try HouseholdRepository(storage: storage)
+        XCTAssertTrue(restarted.state.reservedCodes.isEmpty)
+        XCTAssertNil(restarted.state.places[0].form)
+        XCTAssertEqual(restarted.state.labelSuggestions().first?.score, 5)                    // kind .box still counts
+    }
+
     func testOlderFilesWithoutStatusOrAddedDateStillLoad() throws {
         let (repository, storage, room, _) = try twoRooms()
         let box = StoragePlace(roomID: room.id, name: "Kiste", kind: .box, status: .check)

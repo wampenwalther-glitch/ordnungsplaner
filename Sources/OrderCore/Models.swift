@@ -72,10 +72,12 @@ public struct StoragePlace: Identifiable, Codable, Equatable {
     public var parentID: UUID?
     public var code: String?
     public var status: PlaceStatus?
+    /// What the AI took it for ("schrank", "regal", "kommode", "kiste", "ablage" …); nil if typed by hand.
+    public var form: String?
     public init(id: UUID = UUID(), roomID: UUID, name: String, kind: PlaceKind = .storage,
-                parentID: UUID? = nil, code: String? = nil, status: PlaceStatus? = nil) {
+                parentID: UUID? = nil, code: String? = nil, status: PlaceStatus? = nil, form: String? = nil) {
         self.id = id; self.roomID = roomID; self.name = name
-        self.kind = kind; self.parentID = parentID; self.code = code; self.status = status
+        self.kind = kind; self.parentID = parentID; self.code = code; self.status = status; self.form = form
     }
 }
 
@@ -95,6 +97,38 @@ public enum PlaceLink {
         guard let url = URL(string: trimmed), url.scheme?.lowercased() == scheme, url.host?.lowercased() == "place" else { return nil }
         return UUID(uuidString: url.lastPathComponent)
     }
+
+    /// QR content of a label that is printed in advance and not yet tied to a place.
+    public static func codeURL(for code: String) -> URL {
+        var parts = URLComponents()
+        parts.scheme = scheme
+        parts.host = "code"
+        parts.path = "/" + code
+        return parts.url ?? URL(string: "\(scheme)://code/")!
+    }
+
+    /// The code in a scanned text: our code link, or any short plain text (labels made in a
+    /// printer app often just contain "K07"). Place links and empty or very long texts are not codes.
+    public static func code(from text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count <= 80, !trimmed.contains("\n"), placeID(from: trimmed) == nil else { return nil }
+        if let url = URL(string: trimmed), url.scheme?.lowercased() == scheme {
+            guard url.host?.lowercased() == "code" else { return nil }
+            let code = url.lastPathComponent.removingPercentEncoding ?? url.lastPathComponent
+            return code.isEmpty || code == "/" ? nil : code
+        }
+        return trimmed
+    }
+}
+
+/// A place that would profit from a label, with the reason in plain words.
+public struct LabelSuggestion: Identifiable, Equatable {
+    public var id: UUID { placeID }
+    public let placeID: UUID
+    public let reason: String
+    public let score: Int
+    /// Obvious candidates are pre-selected in the UI; the user can change that.
+    public var recommended: Bool { score >= 4 }
 }
 
 public struct ActionStep: Identifiable, Codable, Equatable {
@@ -416,6 +450,8 @@ public struct HouseholdState: Codable, Equatable {
     public var analyses: [RoomAnalysis] = []
     public var learned: [LearnedRoutine] = []
     public var inventories: [PlaceInventory] = []
+    /// Codes printed on blank labels that are not tied to a place yet.
+    public var reservedCodes: [String] = []
     public init() {}
 
     // Files written before `analyses` existed stay readable (same schema version,
@@ -435,6 +471,7 @@ public struct HouseholdState: Codable, Equatable {
         analyses = try c.decodeIfPresent([RoomAnalysis].self, forKey: .analyses) ?? []
         learned = try c.decodeIfPresent([LearnedRoutine].self, forKey: .learned) ?? []
         inventories = try c.decodeIfPresent([PlaceInventory].self, forKey: .inventories) ?? []
+        reservedCodes = try c.decodeIfPresent([String].self, forKey: .reservedCodes) ?? []
     }
 
     /// Remembers the AI-planned tasks as routines for the offline planner.
@@ -479,9 +516,32 @@ public struct HouseholdState: Codable, Equatable {
     /// Finds the place a scan refers to: a QR link or UUID, otherwise the printed code (e.g. "K07").
     public func place(forScan text: String) -> StoragePlace? {
         if let id = PlaceLink.placeID(from: text) { return places.first { $0.id == id } }
-        let code = text.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        guard !code.isEmpty else { return nil }
+        guard let code = PlaceLink.code(from: text)?.uppercased() else { return nil }
         return places.first { $0.code?.uppercased() == code }
+    }
+
+    /// Places that would profit from a label (no code yet), most useful first. Closed
+    /// containers come before open shelves, because you cannot see into them.
+    public func labelSuggestions() -> [LabelSuggestion] {
+        places.filter { ($0.code ?? "").isEmpty }.map { place -> LabelSuggestion in
+            var score: Int
+            var reason: String
+            switch place.form {
+            case "kiste": score = 5; reason = "Geschlossene Kiste – von außen sieht man nicht, was drin ist."
+            case "schrank": score = 4; reason = "Schrank mit Türen – der Inhalt ist von außen nicht zu sehen."
+            case "kommode": score = 4; reason = "Kommode mit Schubladen – ein Etikett spart das Aufziehen."
+            case "regal": score = 2; reason = "Offenes Regal – ein Etikett lohnt sich, wenn du den Inhalt erfassen willst."
+            case "ablage": score = 1; reason = "Offene Ablage – meist reicht ein Blick."
+            default:
+                score = place.kind == .box ? 5 : 2
+                reason = place.kind == .box ? "Kiste – von außen sieht man nicht, was drin ist." : "Lagerort ohne Etikett."
+            }
+            let count = latestInventory(place.id)?.items.count ?? 0
+            if count > 0 { score += 2; reason += " Inhalt schon erfasst (\(count)) – mit Etikett findest du ihn per Scan." }
+            else if !placePhotos(place.id).isEmpty { score += 1 }
+            return LabelSuggestion(placeID: place.id, reason: reason, score: score)
+        }
+        .sorted { ($0.score, $1.placeID.uuidString) > ($1.score, $0.placeID.uuidString) }
     }
 
     /// Places with the given status (all places with any status when nil).

@@ -151,7 +151,48 @@ public final class HouseholdRepository {
     }
 
     public func addPlace(_ place: StoragePlace) throws {
-        try transaction { $0.places.append(place) }
+        try transaction { state in
+            state.places.append(place)
+            if let code = place.code?.uppercased() { state.reservedCodes.removeAll { $0.uppercased() == code } }
+        }
+    }
+
+    /// Reserves fresh codes (K21, K22 …) for labels printed in advance. They stay reserved
+    /// until a place takes them, so printing a second batch never repeats a code.
+    @discardableResult
+    public func reserveCodes(prefix: String, count: Int) throws -> [String] {
+        let letters = prefix.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard !letters.isEmpty, letters.count <= 4, (1...200).contains(count) else {
+            throw OrderError.invalid("Bitte eine Vorsilbe (z. B. K) und 1 bis 200 Etiketten wählen.")
+        }
+        var made: [String] = []
+        try transaction { state in
+            var used = Set(state.places.compactMap { $0.code?.uppercased() }).union(state.reservedCodes.map { $0.uppercased() })
+            var number = 1
+            while made.count < count {
+                let code = "\(letters)\(number < 10 ? "0" : "")\(number)"
+                if used.insert(code).inserted { made.append(code) }
+                number += 1
+            }
+            state.reservedCodes.append(contentsOf: made)
+        }
+        return made
+    }
+
+    /// Ties a (scanned or printed-in-advance) code to an existing place.
+    public func assignCode(placeID: UUID, code: String) throws {
+        let clean = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty, clean.count <= 80 else { throw OrderError.invalid("Dieser Code ist leer oder zu lang.") }
+        try transaction { state in
+            guard let index = state.places.firstIndex(where: { $0.id == placeID }) else {
+                throw OrderError.invalid("Dieser Lagerort existiert nicht mehr.")
+            }
+            if let other = state.places.first(where: { $0.id != placeID && $0.code?.uppercased() == clean.uppercased() }) {
+                throw OrderError.invalid("Dieser Code gehört schon zu „\(other.name)“.")
+            }
+            state.places[index].code = clean
+            state.reservedCodes.removeAll { $0.uppercased() == clean.uppercased() }
+        }
     }
 
     /// Moves a place (with everything inside it) under another place – or, with `parentID == nil`,
@@ -217,7 +258,7 @@ public final class HouseholdRepository {
                 throw OrderError.invalid("Dieser Lagerort existiert nicht mehr.")
             }
             let prefix = state.places[index].kind == .box ? "K" : "L"
-            let used = Set(state.places.compactMap { $0.code?.uppercased() })
+            let used = Set(state.places.compactMap { $0.code?.uppercased() }).union(state.reservedCodes.map { $0.uppercased() })
             var number = 1
             while used.contains("\(prefix)\(number < 10 ? "0" : "")\(number)") { number += 1 }
             state.places[index].code = "\(prefix)\(number < 10 ? "0" : "")\(number)"
@@ -432,7 +473,8 @@ public final class HouseholdRepository {
                 guard !name.isEmpty, !state.places.contains(where: {
                     $0.roomID == roomID && $0.name.caseInsensitiveCompare(name) == .orderedSame
                 }) else { continue }
-                state.places.append(StoragePlace(roomID: roomID, name: name, kind: item.kind == "kiste" ? .box : .storage))
+                state.places.append(StoragePlace(roomID: roomID, name: name, kind: item.kind == "kiste" ? .box : .storage,
+                                                 form: item.kind))
                 added += 1
             }
         }

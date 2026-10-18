@@ -19,6 +19,9 @@ struct PlannerTabs: View {
             }
             .environmentObject(model)
         }
+        .sheet(item: $model.pendingCode) { pending in
+            UnassignedCodeSheet(code: pending.code).environmentObject(model)
+        }
         .alert("Nicht gespeichert", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
             Button("OK") { model.error = nil }
         } message: { Text(model.error ?? "") }
@@ -375,6 +378,8 @@ struct FindView: View {
     @State private var scanning = false
     @State private var moving = false
     @State private var printing = false
+    @State private var suggesting = false
+    @State private var blankLabels = false
 
     private var filteredPlaces: [StoragePlace] {
         model.state.places.filter { place in
@@ -385,7 +390,17 @@ struct FindView: View {
 
     var body: some View {
         let hits = statusFilter == nil ? model.state.searchInventory(query) : []
+        let suggestionCount = model.state.labelSuggestions().count
         List {
+            if suggestionCount > 0 {
+                Section {
+                    Button { suggesting = true } label: {
+                        Label("Etiketten-Vorschläge ansehen (\(suggestionCount))", systemImage: "wand.and.stars")
+                    }
+                } footer: {
+                    Text("Die App schlägt vor, welche Kisten und Schränke ein QR-Etikett verdienen. Du entscheidest.")
+                }
+            }
             if !model.state.places.isEmpty {
                 Section {
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -430,21 +445,23 @@ struct FindView: View {
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Menu {
+                    Button("Leere Etiketten vorbereiten", systemImage: "qrcode") { blankLabels = true }
                     Button("Etiketten aller Lagerorte", systemImage: "printer") { printing = true }
                         .disabled(model.state.places.isEmpty)
                     Button("Umräumen per Scan", systemImage: "arrow.left.arrow.right") { moving = true }
                         .disabled(model.state.places.isEmpty)
                 } label: { Label("Mehr", systemImage: "ellipsis.circle") }
                 Button("QR-Etikett scannen", systemImage: "qrcode.viewfinder") { scanning = true }
-                    .disabled(model.state.places.isEmpty)
             }
         }
         .sheet(isPresented: $scanning) {
-            PlaceScanSheet(prompt: "Scanne das Etikett einer Kiste oder eines Regals") { place in
+            PlaceScanSheet(prompt: "Scanne das Etikett einer Kiste oder eines Regals", allowNewCode: true) { place in
                 model.openedPlace = AppModel.OpenedPlace(id: place.id)
             }
         }
         .sheet(isPresented: $moving) { MoveByScanSheet() }
+        .sheet(isPresented: $suggesting) { LabelSuggestionsSheet() }
+        .sheet(isPresented: $blankLabels) { BlankLabelsSheet() }
         .sheet(isPresented: $printing) { LabelSheet(placeIDs: model.state.places.map(\.id)) }
     }
 

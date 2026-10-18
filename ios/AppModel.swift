@@ -130,12 +130,23 @@ final class AppModel: ObservableObject {
     /// Set when a QR code (scanned in the app or with the iPhone camera) points at one of our places.
     @Published var openedPlace: OpenedPlace?
 
-    func handleLink(_ url: URL) {
-        guard url.scheme?.lowercased() == PlaceLink.scheme else { return }
-        if let id = PlaceLink.placeID(from: url.absoluteString), state.places.contains(where: { $0.id == id }) {
-            openedPlace = OpenedPlace(id: id)
+    struct PendingCode: Identifiable { let code: String; var id: String { code } }
+    /// Set when a scanned label's code belongs to no place yet (blank label or one from a printer app).
+    @Published var pendingCode: PendingCode?
+
+    func handleLink(_ url: URL) { handleScanned(url.absoluteString) }
+
+    /// Reacts to any scanned text: known place → open it; unknown code → offer to assign it.
+    func handleScanned(_ text: String) {
+        if let id = PlaceLink.placeID(from: text) {
+            if state.places.contains(where: { $0.id == id }) { openedPlace = OpenedPlace(id: id) }
+            else { error = "Dieser Code gehört zu keinem deiner Lagerorte – vielleicht stammt er aus einer anderen Sicherung oder der Ort wurde gelöscht." }
+        } else if let place = state.place(forScan: text) {
+            openedPlace = OpenedPlace(id: place.id)
+        } else if let code = PlaceLink.code(from: text) {
+            pendingCode = PendingCode(code: code)
         } else {
-            error = "Dieser Code gehört zu keinem deiner Lagerorte – vielleicht stammt er aus einer anderen Sicherung oder der Ort wurde gelöscht."
+            error = "Das ist kein Etikett-Code, den der Ordnungsplaner lesen kann."
         }
     }
 

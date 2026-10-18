@@ -97,6 +97,8 @@ struct ScanPanel: View {
 /// Scan one place and hand it back.
 struct PlaceScanSheet: View {
     let prompt: String
+    /// When true, a code that belongs to no place starts the "assign this code" flow instead of an error.
+    var allowNewCode = false
     let onPlace: (StoragePlace) -> Void
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
@@ -110,6 +112,9 @@ struct PlaceScanSheet: View {
                         message = nil
                         dismiss()
                         onPlace(place)
+                    } else if allowNewCode, PlaceLink.code(from: text) != nil {
+                        dismiss()
+                        model.handleScanned(text)
                     } else {
                         message = "Dieser Code gehört zu keinem deiner Lagerorte."
                     }
