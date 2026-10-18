@@ -206,6 +206,43 @@ final class RepositoryTests: XCTestCase {
         XCTAssertTrue(restarted.state.analyses.isEmpty)
     }
 
+    func testSessionClockExcludesPausesAndSurvivesRestart() throws {
+        var session = WorkSession(taskIDs: [UUID()], goal: .order, timeBudget: 10, energy: .normal)
+        let t0 = session.startedAt
+        XCTAssertEqual(session.elapsed(at: t0.addingTimeInterval(120)), 120, accuracy: 0.5)
+        XCTAssertEqual(session.remaining(at: t0.addingTimeInterval(120)), 480, accuracy: 0.5)
+        session.stopClock(at: t0.addingTimeInterval(120))
+        session.status = .paused
+        XCTAssertEqual(session.elapsed(at: t0.addingTimeInterval(900)), 120, accuracy: 0.5)
+        session.startClock(at: t0.addingTimeInterval(900))
+        session.status = .active
+        XCTAssertEqual(session.elapsed(at: t0.addingTimeInterval(960)), 180, accuracy: 0.5)
+        session.timeBudget += 5
+        XCTAssertEqual(session.remaining(at: t0.addingTimeInterval(960)), 720, accuracy: 0.5)
+        let copy = try JSONDecoder().decode(WorkSession.self, from: JSONEncoder().encode(session))
+        XCTAssertEqual(copy.elapsed(at: t0.addingTimeInterval(960)), 180, accuracy: 0.5)
+    }
+
+    func testPauseExtendAndOldSessionsWithoutClock() throws {
+        let storage = MemoryStorage()
+        let (repository, _) = try fixture(storage)
+        try repository.pause()
+        XCTAssertNil(repository.state.session?.runningSince)
+        try repository.extendSession(minutes: 5)
+        XCTAssertEqual(repository.state.session?.timeBudget, 15)
+        try repository.resume()
+        XCTAssertNotNil(repository.state.session?.runningSince)
+        try repository.endSession()
+        XCTAssertThrowsError(try repository.extendSession(minutes: 5))
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(storage.data)) as? [String: Any])
+        var session = try XCTUnwrap(json["session"] as? [String: Any])
+        session.removeValue(forKey: "elapsedSeconds")
+        session.removeValue(forKey: "runningSince")
+        json["session"] = session
+        storage.data = try JSONSerialization.data(withJSONObject: json)
+        XCTAssertNoThrow(try HouseholdRepository(storage: storage))
+    }
+
     func testTickStepsOffInAnyOrderAndBack() throws {
         let storage = MemoryStorage()
         let (repository, task) = try fixture(storage)

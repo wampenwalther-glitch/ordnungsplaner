@@ -133,6 +133,7 @@ private struct CurrentStepCard: View {
                 Spacer()
                 Text(session.goal.label).font(.caption).foregroundStyle(.secondary)
             }
+            SessionTimerView(session: session)
             if isVeryFirstStep, let hint = model.state.latestAnalysis(task.roomID)?.startHint, !hint.isEmpty {
                 Label("Starte hier: \(hint)", systemImage: "mappin.and.ellipse")
                     .font(.callout).foregroundStyle(Color.accentColor)
@@ -165,6 +166,63 @@ private struct CurrentStepCard: View {
                 Button("Runde beenden", systemImage: "stop") { model.perform { try $0.endSession() } }
             }
             .buttonStyle(.bordered)
+        }
+    }
+}
+
+/// Live countdown of the round with a pace hint. Time stays correct in the
+/// background because it is derived from stored timestamps, not from ticking.
+private struct SessionTimerView: View {
+    let session: WorkSession
+    @EnvironmentObject private var model: AppModel
+
+    /// Minutes still planned for the open steps of this round's tasks.
+    private var plannedMinutesLeft: Double {
+        session.taskIDs.compactMap { id in model.state.tasks.first { $0.id == id } }.reduce(0) { sum, task in
+            let open = task.steps.filter { $0.completedAt == nil }.count
+            return sum + Double(task.estimatedMinutes) * Double(open) / Double(max(task.steps.count, 1))
+        }
+    }
+
+    private func clock(_ seconds: TimeInterval) -> String {
+        let value = Int(abs(seconds).rounded(.down))
+        let text = value >= 3600
+            ? String(format: "%d:%02d:%02d", value / 3600, value % 3600 / 60, value % 60)
+            : String(format: "%02d:%02d", value / 60, value % 60)
+        return seconds < 0 ? "+" + text : text
+    }
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let remaining = session.remaining(at: context.date)
+            let total = Double(max(session.timeBudget, 1) * 60)
+            let need = plannedMinutesLeft * 60
+            let over = remaining <= 0
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline) {
+                    Image(systemName: session.status == .paused ? "pause.circle" : "timer")
+                    Text(clock(remaining))
+                        .font(.system(size: 34, weight: .bold, design: .rounded)).monospacedDigit()
+                        .foregroundStyle(over ? Color.red : Color.primary)
+                    Spacer()
+                    Button("+5 Min.", systemImage: "plus") { model.perform { try $0.extendSession(minutes: 5) } }
+                        .buttonStyle(.bordered).controlSize(.small)
+                }
+                ProgressView(value: min(max(session.elapsed(at: context.date), 0), total), total: total)
+                    .tint(over ? Color.red : Color.accentColor)
+                if session.status == .paused {
+                    Text("Pausiert – die Uhr steht.").font(.caption).foregroundStyle(.secondary)
+                } else if over {
+                    Text("Die Zeit ist um. Mach in Ruhe fertig, verlängere oder beende die Runde.").font(.caption).foregroundStyle(.red)
+                } else if need <= remaining * 0.9 {
+                    Label("Im Plan", systemImage: "checkmark.circle").font(.caption).foregroundStyle(Color.accentColor)
+                } else if need <= remaining * 1.15 {
+                    Label("Knapp, aber machbar", systemImage: "exclamationmark.circle").font(.caption).foregroundStyle(.orange)
+                } else {
+                    Label("Eng: Die Zeit reicht vermutlich nicht für alles. Das Wichtigste steht vorne.", systemImage: "exclamationmark.triangle")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+            }
         }
     }
 }

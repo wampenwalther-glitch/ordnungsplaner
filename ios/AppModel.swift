@@ -5,7 +5,10 @@ import OrderCore
 
 @MainActor
 final class AppModel: ObservableObject {
-    @Published private(set) var state: HouseholdState
+    @Published private(set) var state: HouseholdState {
+        // Keeps the timer notifications in step with every change of the running round.
+        didSet { TimerAlerts.shared.sync(state.session) }
+    }
     @Published var error: String?
     let repository: HouseholdRepository
     let fileURL: URL
@@ -16,6 +19,8 @@ final class AppModel: ObservableObject {
         fileURL = directory.appendingPathComponent("household.json")
         repository = try HouseholdRepository(storage: FileStateStorage(fileURL: fileURL))
         state = repository.state
+        TimerAlerts.shared.install()
+        TimerAlerts.shared.sync(state.session)
     }
 
     @discardableResult

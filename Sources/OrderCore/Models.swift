@@ -93,14 +93,46 @@ public struct WorkSession: Identifiable, Codable, Equatable {
     public let id: UUID
     public let taskIDs: [UUID]
     public let goal: Goal
-    public let timeBudget: Int
+    public var timeBudget: Int
     public let energy: Energy
     public var status: SessionStatus
     public let startedAt: Date
+    /// Seconds already worked while the clock was stopped (pauses excluded).
+    /// nil only in sessions saved before the timer existed.
+    public var elapsedSeconds: Double?
+    /// Start of the current running stretch; nil while paused or finished.
+    public var runningSince: Date?
     public init(taskIDs: [UUID], goal: Goal, timeBudget: Int, energy: Energy) {
         self.id = UUID(); self.taskIDs = taskIDs; self.goal = goal
         self.timeBudget = timeBudget; self.energy = energy; self.status = .active
         self.startedAt = Date()
+        self.elapsedSeconds = 0
+        self.runningSince = startedAt
+    }
+
+    private var clockStart: Date? {
+        if let runningSince { return runningSince }
+        return status == .active && elapsedSeconds == nil ? startedAt : nil
+    }
+
+    /// Worked time in seconds: banked time plus the running stretch.
+    public func elapsed(at now: Date = Date()) -> TimeInterval {
+        (elapsedSeconds ?? 0) + (clockStart.map { max(0, now.timeIntervalSince($0)) } ?? 0)
+    }
+
+    /// Seconds left of the budget; negative once the time is over.
+    public func remaining(at now: Date = Date()) -> TimeInterval {
+        Double(timeBudget * 60) - elapsed(at: now)
+    }
+
+    public mutating func stopClock(at now: Date = Date()) {
+        if let start = clockStart { elapsedSeconds = (elapsedSeconds ?? 0) + max(0, now.timeIntervalSince(start)) }
+        runningSince = nil
+    }
+
+    public mutating func startClock(at now: Date = Date()) {
+        if elapsedSeconds == nil { elapsedSeconds = elapsed(at: now) }
+        runningSince = now
     }
 }
 

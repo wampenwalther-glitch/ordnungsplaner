@@ -221,22 +221,37 @@ public final class HouseholdRepository {
         }
     }
 
-    public func pause() throws {
+    public func pause(at date: Date = Date()) throws {
         try transaction { state in
             guard state.session?.status == .active else { throw OrderError.invalid("Keine aktive Sitzung.") }
+            state.session?.stopClock(at: date)
             state.session?.status = .paused
         }
     }
 
-    public func resume() throws {
+    public func resume(at date: Date = Date()) throws {
         try transaction { state in
             guard state.session?.status == .paused else { throw OrderError.invalid("Keine pausierte Sitzung.") }
+            state.session?.startClock(at: date)
             state.session?.status = .active
         }
     }
 
-    public func endSession() throws {
-        try transaction { state in state.session?.status = .finished }
+    public func endSession(at date: Date = Date()) throws {
+        try transaction { state in
+            state.session?.stopClock(at: date)
+            state.session?.status = .finished
+        }
+    }
+
+    /// Adds time to the running round (5-minute steps from the UI).
+    public func extendSession(minutes: Int) throws {
+        try transaction { state in
+            guard let session = state.session, session.status != .finished, minutes > 0 else {
+                throw OrderError.invalid("Es läuft keine Runde, die verlängert werden kann.")
+            }
+            state.session?.timeBudget = min(session.timeBudget + minutes, 600)
+        }
     }
 
     public func completeCurrentStep(expectedStepID: UUID, at date: Date = Date()) throws {
@@ -252,7 +267,10 @@ public final class HouseholdRepository {
             state.undoRecord = UndoRecord(taskBefore: current, sessionBefore: state.session, completionEventID: event.id)
             state.tasks[taskIndex].steps[stepIndex].completedAt = date
             state.events.append(event)
-            if state.currentTask == nil { state.session?.status = .finished }
+            if state.currentTask == nil {
+                state.session?.stopClock(at: date)
+                state.session?.status = .finished
+            }
         }
     }
 
@@ -275,6 +293,7 @@ public final class HouseholdRepository {
                 state.events.removeAll { $0.stepID == stepID }
             }
             if let session = state.session, session.status != .finished, state.currentTask == nil {
+                state.session?.stopClock(at: date)
                 state.session?.status = .finished
             }
         }

@@ -22,6 +22,9 @@ struct SettingsView: View {
             Section("KI") {
                 NavigationLink { AISettingsView() } label: { LabeledContent("KI-Zugang", value: aiStatus) }
             }
+            Section("Zeit") {
+                NavigationLink { TimerSettingsView() } label: { Label("Timer und Hinweise", systemImage: "bell") }
+            }
             Section("Daten") {
                 NavigationLink { DataSettingsView() } label: { Label("Sicherung und Wiederherstellung", systemImage: "externaldrive") }
             }
@@ -33,6 +36,64 @@ struct SettingsView: View {
         }
         .navigationTitle("Einstellungen")
         .onAppear { hasKey = AIKeyStore.hasKey }
+    }
+}
+
+struct TimerSettingsView: View {
+    @AppStorage(TimerAlerts.soundKey) private var sound = true
+    @AppStorage(TimerMilestone.half.defaultsKey) private var half = true
+    @AppStorage(TimerMilestone.left10.defaultsKey) private var left10 = true
+    @AppStorage(TimerMilestone.left5.defaultsKey) private var left5 = true
+    @AppStorage(TimerMilestone.left2.defaultsKey) private var left2 = false
+    @AppStorage(TimerMilestone.left1.defaultsKey) private var left1 = false
+    @AppStorage(TimerMilestone.end.defaultsKey) private var end = true
+    @State private var permission: String?
+
+    var body: some View {
+        Form {
+            Section {
+                Text("Während einer Aufräumrunde läuft ein Timer mit deiner gewählten Zeit. Hier legst du fest, wann dich die App erinnert. Die Hinweise kommen auch, wenn das iPhone gesperrt ist.")
+                    .font(.callout)
+            }
+            Section("Wann soll ich dich erinnern?") {
+                Toggle(TimerMilestone.half.label, isOn: $half)
+                Toggle(TimerMilestone.left10.label, isOn: $left10)
+                Toggle(TimerMilestone.left5.label, isOn: $left5)
+                Toggle(TimerMilestone.left2.label, isOn: $left2)
+                Toggle(TimerMilestone.left1.label, isOn: $left1)
+                Toggle(TimerMilestone.end.label, isOn: $end)
+            }
+            Section {
+                Toggle("Ton abspielen", isOn: $sound)
+                Button("Testhinweis in 5 Sekunden", systemImage: "bell.badge") {
+                    TimerAlerts.shared.scheduleTest()
+                    Task { permission = nil; try? await Task.sleep(for: .seconds(1)); await loadPermission() }
+                }
+            } header: {
+                Text("Ton")
+            } footer: {
+                if let permission { Text(permission) }
+                else { Text("Zum Testen die App geöffnet lassen oder das iPhone sperren.") }
+            }
+        }
+        .navigationTitle("Timer und Hinweise")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await loadPermission() }
+        .onChange(of: sound) { _, _ in TimerAlerts.shared.refresh() }
+        .onChange(of: half) { _, _ in TimerAlerts.shared.refresh() }
+        .onChange(of: left10) { _, _ in TimerAlerts.shared.refresh() }
+        .onChange(of: left5) { _, _ in TimerAlerts.shared.refresh() }
+        .onChange(of: left2) { _, _ in TimerAlerts.shared.refresh() }
+        .onChange(of: left1) { _, _ in TimerAlerts.shared.refresh() }
+        .onChange(of: end) { _, _ in TimerAlerts.shared.refresh() }
+    }
+
+    private func loadPermission() async {
+        switch await TimerAlerts.shared.authorizationStatus() {
+        case .denied: permission = "Mitteilungen sind für den Ordnungsplaner ausgeschaltet. Erlaube sie in den iPhone-Einstellungen unter Mitteilungen, sonst kommen keine Hinweise."
+        case .notDetermined: permission = "Beim ersten Hinweis fragt das iPhone, ob Mitteilungen erlaubt sind. Bitte erlauben."
+        default: permission = nil
+        }
     }
 }
 
