@@ -155,9 +155,48 @@ public struct PhotoPoint: Identifiable, Codable, Equatable {
     public let id: UUID
     public let roomID: UUID
     public let name: String
-    public init(id: UUID = UUID(), roomID: UUID, name: String) {
-        self.id = id; self.roomID = roomID; self.name = name
+    /// Set for the automatic point that collects the photos of one storage place's contents.
+    public let placeID: UUID?
+    public init(id: UUID = UUID(), roomID: UUID, name: String, placeID: UUID? = nil) {
+        self.id = id; self.roomID = roomID; self.name = name; self.placeID = placeID
     }
+}
+
+/// One thing the AI (or the user) lists as being in a storage place.
+/// Observation, not a confirmed inventory: the user can correct or delete it.
+public struct PlaceInventoryItem: Identifiable, Codable, Equatable {
+    public let id: UUID
+    public var name: String
+    public var count: String?
+    public var note: String?
+    /// "ai" or "manual"
+    public let source: String?
+    public init(id: UUID = UUID(), name: String, count: String? = nil, note: String? = nil, source: String? = nil) {
+        self.id = id; self.name = name; self.count = count; self.note = note; self.source = source
+    }
+}
+
+/// A stock-taking of one storage place, from photos of its contents or typed by hand.
+public struct PlaceInventory: Identifiable, Codable, Equatable {
+    public let id: UUID
+    public let placeID: UUID
+    public let createdAt: Date
+    public let photoIDs: [UUID]
+    public var summary: String
+    public var items: [PlaceInventoryItem]
+    public var tidyHints: [String]
+    public init(id: UUID = UUID(), placeID: UUID, createdAt: Date = Date(), photoIDs: [UUID], summary: String,
+                items: [PlaceInventoryItem], tidyHints: [String] = []) {
+        self.id = id; self.placeID = placeID; self.createdAt = createdAt; self.photoIDs = photoIDs
+        self.summary = summary; self.items = items; self.tidyHints = tidyHints
+    }
+}
+
+/// Search hit: an item found in a storage place.
+public struct InventoryHit: Identifiable, Equatable {
+    public var id: UUID { item.id }
+    public let item: PlaceInventoryItem
+    public let placeID: UUID
 }
 
 public struct RoomPhoto: Identifiable, Codable, Equatable {
@@ -327,6 +366,7 @@ public struct HouseholdState: Codable, Equatable {
     public var undoRecord: UndoRecord?
     public var analyses: [RoomAnalysis] = []
     public var learned: [LearnedRoutine] = []
+    public var inventories: [PlaceInventory] = []
     public init() {}
 
     // Files written before `analyses` existed stay readable (same schema version,
@@ -345,6 +385,7 @@ public struct HouseholdState: Codable, Equatable {
         undoRecord = try c.decodeIfPresent(UndoRecord.self, forKey: .undoRecord)
         analyses = try c.decodeIfPresent([RoomAnalysis].self, forKey: .analyses) ?? []
         learned = try c.decodeIfPresent([LearnedRoutine].self, forKey: .learned) ?? []
+        inventories = try c.decodeIfPresent([PlaceInventory].self, forKey: .inventories) ?? []
     }
 
     /// Remembers the AI-planned tasks as routines for the offline planner.
@@ -372,9 +413,33 @@ public struct HouseholdState: Codable, Equatable {
     /// Name of the automatic photo point that collects a room's overview photos.
     public static let roomPhotoPointName = "Raumfotos"
 
+    /// Name of the automatic photo point that collects the photos of a storage place's contents.
+    public static let placePhotoPointName = "Inhalt"
+
     public func roomPhotos(_ roomID: UUID) -> [RoomPhoto] {
-        let points = Set(photoPoints.filter { $0.roomID == roomID }.map(\.id))
+        let points = Set(photoPoints.filter { $0.roomID == roomID && $0.placeID == nil }.map(\.id))
         return photos.filter { points.contains($0.pointID) }.sorted { $0.createdAt < $1.createdAt }
+    }
+
+    /// Photos of what is inside a storage place, oldest first.
+    public func placePhotos(_ placeID: UUID) -> [RoomPhoto] {
+        let points = Set(photoPoints.filter { $0.placeID == placeID }.map(\.id))
+        return photos.filter { points.contains($0.pointID) }.sorted { $0.createdAt < $1.createdAt }
+    }
+
+    public func latestInventory(_ placeID: UUID) -> PlaceInventory? {
+        inventories.filter { $0.placeID == placeID }.max { $0.createdAt < $1.createdAt }
+    }
+
+    /// Items (from each place's latest inventory) whose name contains the query.
+    public func searchInventory(_ query: String) -> [InventoryHit] {
+        let needle = LocalPlanner.normalize(query)
+        guard !needle.isEmpty else { return [] }
+        return places.flatMap { place -> [InventoryHit] in
+            (latestInventory(place.id)?.items ?? [])
+                .filter { LocalPlanner.normalize($0.name).contains(needle) }
+                .map { InventoryHit(item: $0, placeID: place.id) }
+        }
     }
 
     public func latestAnalysis(_ roomID: UUID) -> RoomAnalysis? {

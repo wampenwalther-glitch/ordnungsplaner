@@ -75,6 +75,46 @@ final class AppModel: ObservableObject {
         try run { try $0.addRoomPhoto(roomID: roomID, jpegData: data) }
     }
 
+    func addPhoto(_ image: UIImage, to target: PhotoTarget) throws {
+        let data = try Self.normalizedJPEG(image)
+        switch target {
+        case .room(let id): try run { try $0.addRoomPhoto(roomID: id, jpegData: data) }
+        case .place(let id): try run { try $0.addPlacePhoto(placeID: id, jpegData: data) }
+        }
+    }
+
+    // MARK: Stock-taking of storage places
+
+    @Published private(set) var inventoryStatus: [UUID: AnalysisStatus] = [:]
+
+    /// The AI lists what the photos of one storage place show. Keeps running when
+    /// the user leaves the screen; the result is saved.
+    func inventoryPlace(_ placeID: UUID, mode: AIService.InventoryMode) {
+        if inventoryStatus[placeID] == .running { return }
+        guard let place = state.places.first(where: { $0.id == placeID }) else { return }
+        let photos = Array(state.placePhotos(placeID).suffix(6))
+        guard !photos.isEmpty else { inventoryStatus[placeID] = .failed("Mach zuerst ein Foto vom Inhalt."); return }
+        inventoryStatus[placeID] = .running
+        let roomName = state.rooms.first { $0.id == place.roomID }?.name ?? "Raum"
+        let path = state.path(for: placeID)
+        var background = UIBackgroundTaskIdentifier.invalid
+        background = UIApplication.shared.beginBackgroundTask(withName: "KI-Bestandsaufnahme") {
+            UIApplication.shared.endBackgroundTask(background)
+        }
+        let backgroundID = background
+        Task { @MainActor in
+            defer { if backgroundID != .invalid { UIApplication.shared.endBackgroundTask(backgroundID) } }
+            do {
+                let answer = try await AIService.inventory(placeName: path, roomName: roomName,
+                                                           photos: photos.map(\.jpegData), mode: mode)
+                try run { try $0.recordInventory(answer.record(placeID: placeID, photoIDs: photos.map(\.id))) }
+                inventoryStatus[placeID] = nil
+            } catch {
+                inventoryStatus[placeID] = .failed(error.localizedDescription)
+            }
+        }
+    }
+
     // MARK: AI planning
 
     @Published var planningStatus: String?

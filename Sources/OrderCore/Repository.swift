@@ -1,5 +1,9 @@
 import Foundation
 
+extension Optional where Wrapped == String {
+    var nilIfEmpty: String? { flatMap { $0.isEmpty ? nil : $0 } }
+}
+
 public protocol StateStorage {
     func load() throws -> Data?
     func save(_ data: Data) throws
@@ -121,6 +125,66 @@ public final class HouseholdRepository {
                 pointID = point.id
             }
             state.photos.append(RoomPhoto(pointID: pointID, createdAt: date, jpegData: jpegData))
+        }
+    }
+
+    /// Stores a photo of what is inside a storage place. The place's automatic
+    /// photo point is created in the same transaction on first use.
+    public func addPlacePhoto(placeID: UUID, jpegData: Data, at date: Date = Date()) throws {
+        try transaction { state in
+            guard let place = state.places.first(where: { $0.id == placeID }) else {
+                throw OrderError.invalid("Dieser Lagerort existiert nicht mehr.")
+            }
+            let pointID: UUID
+            if let point = state.photoPoints.first(where: { $0.placeID == placeID }) {
+                pointID = point.id
+            } else {
+                let point = PhotoPoint(roomID: place.roomID, name: HouseholdState.placePhotoPointName, placeID: placeID)
+                state.photoPoints.append(point)
+                pointID = point.id
+            }
+            state.photos.append(RoomPhoto(pointID: pointID, createdAt: date, jpegData: jpegData))
+        }
+    }
+
+    /// Saves a stock-taking; only the three newest per place are kept.
+    public func recordInventory(_ inventory: PlaceInventory) throws {
+        try transaction { state in
+            guard state.places.contains(where: { $0.id == inventory.placeID }) else {
+                throw OrderError.invalid("Dieser Lagerort existiert nicht mehr.")
+            }
+            state.inventories.append(inventory)
+            let mine = state.inventories.filter { $0.placeID == inventory.placeID }.sorted { $0.createdAt > $1.createdAt }
+            let drop = Set(mine.dropFirst(3).map(\.id))
+            state.inventories.removeAll { drop.contains($0.id) }
+        }
+    }
+
+    /// Adds a hand-typed item to the place's latest inventory (creating a manual one if needed).
+    public func addInventoryItem(placeID: UUID, name: String, count: String? = nil) throws {
+        try transaction { state in
+            guard state.places.contains(where: { $0.id == placeID }) else {
+                throw OrderError.invalid("Dieser Lagerort existiert nicht mehr.")
+            }
+            let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !clean.isEmpty else { throw OrderError.invalid("Bitte gib einen Namen für den Gegenstand ein.") }
+            let item = PlaceInventoryItem(name: clean, count: count?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty, source: "manual")
+            let mine = state.inventories.enumerated().filter { $0.element.placeID == placeID }
+            if let latest = mine.max(by: { $0.element.createdAt < $1.element.createdAt }) {
+                state.inventories[latest.offset].items.append(item)
+            } else {
+                state.inventories.append(PlaceInventory(placeID: placeID, photoIDs: [], summary: "", items: [item]))
+            }
+        }
+    }
+
+    public func removeInventoryItem(inventoryID: UUID, itemID: UUID) throws {
+        try transaction { state in
+            guard let index = state.inventories.firstIndex(where: { $0.id == inventoryID }),
+                  let itemIndex = state.inventories[index].items.firstIndex(where: { $0.id == itemID }) else {
+                throw OrderError.invalid("Dieser Eintrag existiert nicht mehr.")
+            }
+            state.inventories[index].items.remove(at: itemIndex)
         }
     }
 
@@ -376,7 +440,13 @@ public final class HouseholdRepository {
         }
         for point in state.photoPoints {
             try require(roomIDs.contains(point.roomID) && text(point.name), "Fotopunkt benötigt Raum und Beschreibung.")
+            if let placeID = point.placeID {
+                try require(placeIDs.contains(placeID), "Ein Foto-Abschnitt verweist auf einen unbekannten Lagerort.")
+            }
         }
+        try require(Set(state.inventories.map(\.id)).count == state.inventories.count &&
+                    state.inventories.allSatisfy { placeIDs.contains($0.placeID) && $0.items.allSatisfy { text($0.name) } },
+                    "Ungültige Bestandsaufnahme.")
         for photo in state.photos {
             try require(pointIDs.contains(photo.pointID) && !photo.jpegData.isEmpty && photo.jpegData.count <= 2_000_000,
                         "Foto fehlt, ist zu groß oder hat keinen gültigen Fotopunkt.")

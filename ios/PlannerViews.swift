@@ -362,18 +362,36 @@ struct FindView: View {
     @EnvironmentObject private var model: AppModel
     @State private var query = ""
     var body: some View {
+        let hits = model.state.searchInventory(query)
         List {
-            ForEach(model.state.places.filter {
-                query.isEmpty || model.state.path(for: $0.id).localizedCaseInsensitiveContains(query)
-            }) { place in
-                Label(model.state.path(for: place.id), systemImage: place.kind == .box ? "shippingbox" : "archivebox")
+            if !hits.isEmpty {
+                Section("Gegenstände") {
+                    ForEach(hits) { hit in
+                        NavigationLink { PlaceDetailView(placeID: hit.placeID) } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(hit.item.count.map { "\($0)× \(hit.item.name)" } ?? hit.item.name)
+                                Label(model.state.path(for: hit.placeID), systemImage: "archivebox")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+            Section(hits.isEmpty ? "" : "Lagerorte") {
+                ForEach(model.state.places.filter {
+                    query.isEmpty || model.state.path(for: $0.id).localizedCaseInsensitiveContains(query)
+                }) { place in
+                    NavigationLink { PlaceDetailView(placeID: place.id) } label: { PlaceRow(place: place) }
+                }
             }
             if model.state.places.isEmpty {
                 ContentUnavailableView("Noch keine Lagerorte", systemImage: "archivebox",
-                    description: Text("Lass die KI einen Raum ansehen und übernimm die erkannten Regale, Schränke und Kisten."))
+                    description: Text("Lass die KI einen Raum ansehen und übernimm die erkannten Regale, Schränke und Kisten. Dann kannst du hineinfotografieren und den Inhalt erfassen."))
+            } else if !query.isEmpty && hits.isEmpty && model.state.places.allSatisfy({ !model.state.path(for: $0.id).localizedCaseInsensitiveContains(query) }) {
+                Text("Nichts gefunden. Gesucht wird in Lagerorten und in den erfassten Gegenständen.").foregroundStyle(.secondary)
             }
         }
         .navigationTitle("Finden")
-        .searchable(text: $query, prompt: "Kiste, Regal, Schrank …")
+        .searchable(text: $query, prompt: "Gegenstand, Kiste, Regal …")
     }
 }

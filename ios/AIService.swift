@@ -98,12 +98,52 @@ enum AIService {
         guard !images.isEmpty || analysis != nil else { throw OrderError.invalid("Für \(roomName) gibt es noch keine lesbaren Fotos.") }
         let text = prompt(roomName: roomName, photoCount: images.count, knownPlaces: knownPlaces,
                           goal: goal, minutes: minutes, energy: energy, analysis: analysis)
+        return try decode(try await run(text: text, images: images, format: planFormat), as: AIRoomPlan.self)
+    }
+
+    /// What the user wants from a look into one storage place.
+    enum InventoryMode { case inventoryOnly, tidy }
+
+    /// Takes stock of what the photos of one storage place show.
+    static func inventory(placeName: String, roomName: String, photos: [Data], mode: InventoryMode) async throws -> AIInventory {
+        guard ChatGPTAuth.shared.isConnected || AIKeyStore.hasKey else {
+            throw OrderError.invalid("Die KI ist noch nicht eingerichtet. Verbinde dich unter Einstellungen → KI mit ChatGPT.")
+        }
+        let images = photos.compactMap(uploadJPEG)
+        guard !images.isEmpty else { throw OrderError.invalid("Für \(placeName) gibt es noch keine lesbaren Fotos.") }
+        let tips = mode == .tidy
+            ? "aufraeumtipps: 2 bis 6 konkrete Tipps, wie man den Inhalt ordnen könnte (Gleiches zusammen, beschriften, Aussortieren nur zum Prüfen vorschlagen, nie Wegwerfen bestimmen)."
+            : "aufraeumtipps: immer eine leere Liste."
+        let text = """
+        Du machst eine Bestandsaufnahme. Du siehst \(images.count) Foto(s) vom Inhalt von „\(placeName)“ im Raum „\(roomName)“.
+
+        Regeln:
+        - gegenstaende: einzeln erkennbare Dinge oder Gruppen gleichartiger Dinge (z. B. „USB-Kabel“, „Winterpullover“, „Gesellschaftsspiele“). Gleichartiges zusammenfassen, höchstens 40 Einträge.
+        - anzahl: nur wenn erkennbar, als Text wie „3“ oder „etwa 10“, sonst leer lassen.
+        - hinweis: kurz, z. B. „oben links“, „vermutlich defekt“; sonst leer.
+        - Nur beschreiben, was wirklich zu sehen ist. Nichts erfinden, nichts raten. Verdecktes oder Unklares nicht auflisten, sondern in der zusammenfassung erwähnen (z. B. „Hinten ist nichts erkennbar“).
+        - Keine Aussage über freien Platz oder Prozentwerte.
+        - zusammenfassung: ein bis zwei Sätze, was für ein Lagerort das ist und was hauptsächlich drin liegt.
+        - \(tips)
+        - Alles auf Deutsch, kurz, in Du-Form.
+        """
+        return try decode(try await run(text: text, images: images, format: inventoryFormat), as: AIInventory.self)
+    }
+
+    /// Sends one request over the ChatGPT plan (preferred) or the API key and returns the raw JSON text.
+    private static func run(text: String, images: [Data], format: ResponseFormat) async throws -> String {
         do {
-            if ChatGPTAuth.shared.isConnected { return try await viaChatGPT(text: text, images: images) }
-            return try await viaAPIKey(text: text, images: images)
+            if ChatGPTAuth.shared.isConnected { return try await viaChatGPT(text: text, images: images, format: format) }
+            return try await viaAPIKey(text: text, images: images, format: format)
         } catch let error as URLError {
             throw OrderError.invalid(networkMessage(error))
         }
+    }
+
+    struct ResponseFormat {
+        let name: String
+        let schema: [String: Any]
+        let hint: String
     }
 
     private static func content(text: String, images: [Data]) -> [[String: Any]] {
@@ -116,7 +156,7 @@ enum AIService {
 
     // MARK: Route 1 – ChatGPT plan (official "Sign in with ChatGPT")
 
-    private static func viaChatGPT(text: String, images: [Data]) async throws -> AIRoomPlan {
+    private static func viaChatGPT(text: String, images: [Data], format: ResponseFormat) async throws -> String {
         var forceRefresh = false
         var structured = true
         var attempts = 0
@@ -126,12 +166,12 @@ enum AIService {
             let model = try await chosenChatGPTModel(token: token)
             // Responses over this route must use store:false and stream:true.
             let prompt = structured ? text : text + "\n\nAntworte ausschließlich mit einem JSON-Objekt dieser Form (alle Felder Pflicht): "
-                + schemaHint
+                + format.hint
             var body: [String: Any] = [
                 "model": model, "store": false, "stream": true,
                 "input": [["role": "user", "content": content(text: prompt, images: images)]]
             ]
-            if structured { body["text"] = ["format": ["type": "json_schema", "name": "raumplan", "strict": true, "schema": schema]] }
+            if structured { body["text"] = ["format": ["type": "json_schema", "name": format.name, "strict": true, "schema": format.schema]] }
             var request = URLRequest(url: URL(string: base + "/responses")!)
             request.httpMethod = "POST"
             request.timeoutInterval = 240
@@ -162,7 +202,7 @@ enum AIService {
     private struct StreamFailure: Error { let code: String?; let detail: String? }
 
     /// Reads the SSE stream to `response.completed`; anything else counts as failure.
-    private static func readStream(_ bytes: URLSession.AsyncBytes) async throws -> AIRoomPlan {
+    private static func readStream(_ bytes: URLSession.AsyncBytes) async throws -> String {
         var text = ""
         var finalText: String?
         var completed = false
@@ -184,7 +224,7 @@ enum AIService {
         guard completed else {
             throw OrderError.invalid("Die Antwort der KI wurde unterbrochen. Bitte noch einmal versuchen.")
         }
-        return try decode(finalText ?? text)
+        return finalText ?? text
     }
 
     private static func chosenChatGPTModel(token: String) async throws -> String {
@@ -232,12 +272,12 @@ enum AIService {
 
     // MARK: Route 2 – own API key (optional fallback, billed separately by OpenAI)
 
-    private static func viaAPIKey(text: String, images: [Data]) async throws -> AIRoomPlan {
+    private static func viaAPIKey(text: String, images: [Data], format: ResponseFormat) async throws -> String {
         guard let key = AIKeyStore.key else { throw OrderError.invalid("Noch kein Schlüssel gespeichert.") }
         let body: [String: Any] = [
             "model": model,
             "input": [["role": "user", "content": content(text: text, images: images)]],
-            "text": ["format": ["type": "json_schema", "name": "raumplan", "strict": true, "schema": schema]]
+            "text": ["format": ["type": "json_schema", "name": format.name, "strict": true, "schema": format.schema]]
         ]
         var request = URLRequest(url: URL(string: base + "/responses")!)
         request.httpMethod = "POST"
@@ -254,7 +294,7 @@ enum AIService {
         guard let output = outputText(data) else {
             throw OrderError.invalid("Die KI hat keine verwertbare Antwort geliefert. Bitte noch einmal versuchen.")
         }
-        return try decode(output)
+        return output
     }
 
     /// Cheap call that only checks key and model, without photos.
@@ -275,12 +315,12 @@ enum AIService {
 
     // MARK: Parsing and messages
 
-    private static func decode(_ text: String) throws -> AIRoomPlan {
+    private static func decode<T: Decodable>(_ text: String, as type: T.Type) throws -> T {
         var candidate = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if let start = candidate.firstIndex(of: "{"), let end = candidate.lastIndex(of: "}"), start < end {
             candidate = String(candidate[start...end])
         }
-        do { return try JSONDecoder().decode(AIRoomPlan.self, from: Data(candidate.utf8)) }
+        do { return try JSONDecoder().decode(T.self, from: Data(candidate.utf8)) }
         catch { throw OrderError.invalid("Die Antwort der KI hatte ein unerwartetes Format. Bitte noch einmal versuchen.") }
     }
 
@@ -443,6 +483,45 @@ enum AIService {
                     "problemzonen": ["type": "array", "items": str()], "aufgaben": ["type": "array", "items": task],
                     "muster": ["type": "array", "items": ["type": "string", "enum": Clutter.allCases.map(\.rawValue)]]])
     }()
+
+    private static var planFormat: ResponseFormat { ResponseFormat(name: "raumplan", schema: schema, hint: schemaHint) }
+
+    private static let inventoryFormat: ResponseFormat = {
+        func str() -> [String: Any] { ["type": "string"] }
+        let item: [String: Any] = ["type": "object", "properties": ["name": str(), "anzahl": str(), "hinweis": str()],
+                                   "required": ["name", "anzahl", "hinweis"], "additionalProperties": false]
+        let schema: [String: Any] = [
+            "type": "object",
+            "properties": ["zusammenfassung": str(), "gegenstaende": ["type": "array", "items": item],
+                           "aufraeumtipps": ["type": "array", "items": str()]],
+            "required": ["zusammenfassung", "gegenstaende", "aufraeumtipps"], "additionalProperties": false
+        ]
+        return ResponseFormat(name: "bestandsaufnahme", schema: schema, hint: """
+            {"zusammenfassung": string, "gegenstaende": [{"name": string, "anzahl": string, "hinweis": string}], "aufraeumtipps": [string]}
+            """)
+    }()
+}
+
+/// What the AI saw in one storage place.
+struct AIInventory: Decodable {
+    struct Item: Decodable { let name: String; let anzahl: String?; let hinweis: String? }
+    let zusammenfassung: String
+    let gegenstaende: [Item]
+    let aufraeumtipps: [String]?
+
+    /// Stored form; entries without a name are dropped and the list is capped.
+    func record(placeID: UUID, photoIDs: [UUID]) -> PlaceInventory {
+        func clean(_ text: String?) -> String? {
+            let value = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return value.isEmpty ? nil : value
+        }
+        let items = gegenstaende.compactMap { entry -> PlaceInventoryItem? in
+            guard let name = clean(entry.name) else { return nil }
+            return PlaceInventoryItem(name: name, count: clean(entry.anzahl), note: clean(entry.hinweis), source: "ai")
+        }
+        return PlaceInventory(placeID: placeID, photoIDs: photoIDs, summary: zusammenfassung.trimmingCharacters(in: .whitespacesAndNewlines),
+                              items: Array(items.prefix(60)), tidyHints: (aufraeumtipps ?? []).compactMap { clean($0) })
+    }
 }
 
 extension AIRoomPlan {

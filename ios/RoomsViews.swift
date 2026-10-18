@@ -113,8 +113,15 @@ private struct RoomCard: View {
 
 /// Photo capture block: big camera button, multi-select import and the
 /// photo grid. Used in the room screen and from the start flow.
+enum PhotoTarget {
+    case room(UUID)
+    case place(UUID)
+}
+
 struct RoomPhotosSection: View {
-    let roomID: UUID
+    let target: PhotoTarget
+    init(roomID: UUID) { target = .room(roomID) }
+    init(placeID: UUID) { target = .place(placeID) }
     @EnvironmentObject private var model: AppModel
     @State private var showingCamera = false
     @State private var askMore = false
@@ -125,12 +132,26 @@ struct RoomPhotosSection: View {
     private let columns = [GridItem(.adaptive(minimum: 96), spacing: 8)]
 
     var body: some View {
-        let photos = model.state.roomPhotos(roomID)
+        let photos: [RoomPhoto] = {
+            switch target {
+            case .room(let id): return model.state.roomPhotos(id)
+            case .place(let id): return model.state.placePhotos(id)
+            }
+        }()
         VStack(alignment: .leading, spacing: 12) {
-            Text(photos.count >= 4
-                 ? "\(photos.count) Fotos – das reicht für einen guten Plan. Mehr Fotos machen ihn genauer."
-                 : "Am besten 4 Fotos: aus jeder Ecke eins, Blick in den Raum. Bisher \(photos.count) von 4.")
-                .font(.callout).foregroundStyle(.secondary)
+            Group {
+                switch target {
+                case .room:
+                    Text(photos.count >= 4
+                         ? "\(photos.count) Fotos – das reicht für einen guten Plan. Mehr Fotos machen ihn genauer."
+                         : "Am besten 4 Fotos: aus jeder Ecke eins, Blick in den Raum. Bisher \(photos.count) von 4.")
+                case .place:
+                    Text(photos.isEmpty
+                         ? "Öffne den Schrank, das Regal, die Schublade oder die Kiste und fotografiere hinein – von vorn oder von oben. Bei großen Orten gern mehrere Fotos."
+                         : "\(photos.count) Foto(s). Je näher und heller, desto besser erkennt die KI den Inhalt.")
+                }
+            }
+            .font(.callout).foregroundStyle(.secondary)
             if !photos.isEmpty {
                 LazyVGrid(columns: columns, spacing: 8) {
                     ForEach(photos) { photo in
@@ -163,19 +184,19 @@ struct RoomPhotosSection: View {
                     do {
                         guard let data = try await item.loadTransferable(type: Data.self), data.count <= 30_000_000,
                               let image = UIImage(data: data) else { throw OrderError.invalid("Ein Bild war nicht lesbar.") }
-                        try model.addRoomPhoto(image, roomID: roomID)
+                        try model.addPhoto(image, to: target)
                     } catch { errorText = error.localizedDescription }
                 }
             }
         }
         .fullScreenCover(isPresented: $showingCamera) {
             CameraCapture { image in
-                do { try model.addRoomPhoto(image, roomID: roomID); askMore = true }
+                do { try model.addPhoto(image, to: target); askMore = true }
                 catch { errorText = error.localizedDescription }
             }
             .ignoresSafeArea()
         }
-        .confirmationDialog("Foto gespeichert (\(photos.count)). Noch eins?", isPresented: $askMore, titleVisibility: .visible) {
+        .confirmationDialog("Foto gespeichert. Noch eins?", isPresented: $askMore, titleVisibility: .visible) {
             Button("Nächstes Foto") { showingCamera = true }
             Button("Fertig", role: .cancel) {}
         }
@@ -234,7 +255,6 @@ struct RoomDetailView: View {
     @EnvironmentObject private var model: AppModel
     @State private var addingPlace = false
     @State private var showingScan = false
-    @State private var movingPlace: StoragePlace?
     @State private var lookError: String?
     @State private var adoptedMessage: String?
     @ObservedObject private var auth = ChatGPTAuth.shared
@@ -310,15 +330,15 @@ struct RoomDetailView: View {
                 Card {
                     Text("Lagerorte").font(.title3.bold())
                     if places.isEmpty {
-                        Text("Noch keine. Übernimm die von der KI erkannten oder leg selbst welche an.")
+                        Text("Noch keine. Übernimm die von der KI erkannten (siehe oben) oder leg selbst welche an.")
                             .foregroundStyle(.secondary)
+                    } else {
+                        Text("Tippe einen Lagerort an, um hineinzufotografieren und den Inhalt erfassen zu lassen.")
+                            .font(.callout).foregroundStyle(.secondary)
                     }
                     ForEach(places) { place in
-                        Button { movingPlace = place } label: {
-                            Label(model.state.path(for: place.id), systemImage: place.kind == .box ? "shippingbox" : "archivebox")
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .buttonStyle(.plain)
+                        NavigationLink { PlaceDetailView(placeID: place.id) } label: { PlaceRow(place: place) }
+                            .buttonStyle(.plain)
                     }
                     Button("Lagerort oder Kiste hinzufügen", systemImage: "plus") { addingPlace = true }
                 }
@@ -337,7 +357,6 @@ struct RoomDetailView: View {
         .background(Color(.systemGroupedBackground))
         .navigationTitle(model.state.rooms.first { $0.id == roomID }?.name ?? "Raum")
         .sheet(isPresented: $addingPlace) { PlaceForm(roomID: roomID) }
-        .sheet(item: $movingPlace) { MovePlaceForm(place: $0) }
         .sheet(isPresented: $showingScan) {
             RoomScanSheet(roomName: model.state.rooms.first { $0.id == roomID }?.name ?? "Raum") { scan in
                 try model.saveScan(scan, roomID: roomID)
